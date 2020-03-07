@@ -1,0 +1,405 @@
+rospack find turtlesim //查找包路径
+rospack depends chapter2_tutorials  //查看依赖关系
+rosstack find 'nameofstack' //查找某个安装过的功能包集
+rosls turtlesim //获得功能包或功能包集下面的文件列表
+roscd turtlesim //进入文件夹
+pwd
+
+echo $ROS_PACKAGE_PATH //查看正在使用的工作空间
+echo "export ROS_PACKAGE_PATH=~/dev/rosbook:${ROS_PACKAGE_PATH}">>~/.bashrc     //创建工作空间目录
+
+roscreate-pkg chapter2_tutorials std_msgs rospy roscpp //创建ROS功能包，名称后面是依赖项
+
+rosmake chapter2_tutorials //编译ROS功能包
+
+rosnode //获得结点
+rosnode <param> -h //获得参数详细说明
+rosnode list//结点列表
+//获得结点更详细的信息
+
+rosnode info name
+rosnode ping name
+rosnode machine name
+rosnode kill name
+rosrun turtlesim turtlesim_node //启动一个新的结点
+
+//使用主题与节点交互---->rostopic
+rostopic bw //显示主题所使用的带宽
+rostopic echo //将消息输出到屏幕
+rostopic find //按照类型查找主题
+rostopic hz //显示主题的发布频率
+rostopic info //输出活动主题的信息
+rostopic list //输出活动主题的列表
+rostopic pub //将数据发布到主题
+rostopic type //输出主题的类型
+rostopic bw -h //显示参数的详细信息
+rosrun turtlesim turtle_teleop_key //使用箭头移动乌龟
+rosnode info /teleop_turtle
+rosnode info /turtlesim
+rostopic list
+rostopic echo /turtle1/cmd_vel //查看消息产生时发送了哪些数据
+rostopic type /turtle1/cmd_vel //查看主题发送的消息类型
+rosmsg show geometry_msgs/Twist //查看消息字段
+rostopic pub [topic] [msg_type] [args] //发布主题
+
+//服务能够使节点之间相互通信，服务允许节点发送请求和接收响应--->rosservice
+rosservice args /service //输出服务参数
+rosservice call /service args //根据命令行参数调用服务
+rosservice find msg-type //根据服务类型查询服务
+rosservice info /service //输出服务信息
+rosservice list //输出活动服务清单
+rosservice type /service //输出服务类型
+
+rosservice list
+rosservice type /clear
+rosservice call /clear
+rosservice type /spawn | rossrv show
+rosservice call /spawn 3 3 0.2 "new_turtle"
+
+//参数服务器用于存储所有节点均可访问的共享数据---->rosparam
+rosparam set parameter value //设置参数值
+rosparam get parameter //获取参数值
+rosparam loadfile //加载参数文件到参数服务器
+rosparam delete parameter //删除参数
+rosparam dump file 将参数服务器保存到一个文件
+rosparam list //列出服务器中的所有参数
+
+rosparam get /background_b
+rosparam set /background_b 100
+rosparam dump save.yaml
+rosparam load load.yaml namespace
+
+//创建工作区
+mkdir -p ~/catkin_ws/src
+cd ~/catkin_ws/src
+catkin_init_workspace
+//编译
+cd ~/catkin_ws/
+catkin_make //这时候，会在当前文件夹下生成devel,build这俩个子文件夹，在devel文件夹下能看到几个setup.*sh文件
+把工作区在bash中注册
+source devel/setup.bash
+查看是否注册：echo $ROS_PACKAGE_PATH
+//在一个工作区可能包含多个ROS工程包.而最基本ROS工程包中会包括XmakeLists.txt和Package.xml这俩个文件，其中Package.xml主要包含本项目信息和各种依赖而CmakeLists包含了如何编译和安装代码的信息
+cd ~/catkin_ws/src
+catkin_create_pkg beginner_tutorials std_msgs rospy roscpp //创建包
+cd ~/catkin_ws
+catkin_make//编译工程包
+一个简单的发布订阅程序
+cd ~/catkin_ws/src/beginner_tutorials
+cd src
+talker.cpp
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+ 
+#include <sstream>
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "talker");//启动节点并且设置其名称，请记住该名称必须是唯一的
+ 
+  ros::NodeHandle n; //设置节点进程的句柄
+
+  ros::Publisher chatter_pub = n.advertise<std_msgs::String>("chatter", 1000);//将节点设置成发布者，并将所发布主题的类型和名称告知节点管理器，第一个参数是消息的名称，第二个参数是缓冲区的大小。发布数据速度快，设置为1000个消息 
+  ros::Rate loop_rate(10);//设置发送数据的频率为10Hz
+ 
+  int count = 0;
+  while (ros::ok())//当收到Ctrl+C的按键，或ROS停止当前节点运行时，ros::ok()库会执行停止节点运行的命令
+  {
+    std_msgs::String msg;
+ 
+    std::stringstream ss;
+    ss << "hello world " << count;
+    msg.data = ss.str();
+ 
+    ROS_INFO("%s", msg.data.c_str());
+ 
+    chatter_pub.publish(msg); //发布消息
+ 
+    ros::spinOnce();//如果有一个订阅者出现，ROS就会更新和读取所有主题
+ 
+    loop_rate.sleep();//按照10HZ频率将程序挂起
+    ++count;
+  }
+  return 0;
+}
+
+listener.cpp文件
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+
+void chatterCallback(const std_msgs::String::ConstPtr& msg)//每次该节点收到一条消息时都将调用此函数
+{
+  ROS_INFO("I heard: [%s]", msg->data.c_str());//命令行输出数据
+}
+ 
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "listener");
+ 
+  ros::NodeHandle n;
+ 
+  ros::Subscriber sub = n.subscribe("chatter", 1000, chatterCallback);//创建一个订阅者，并从主题获取以chatter为名称的数据，设置缓存区为1000个消息，处理消息句柄的回调函数为messageCallback;
+ 
+  ros::spin();//是节点读取数据的消息响应循环
+ 
+  return 0;
+}
+
+编辑Cmakelist.txt文件--->是beginner_tutorials目录下的
+末尾添加：
+include_directories(include ${catkin_INCLUDE_DIRS})
+
+add_executable(talker src/talker.cpp)
+target_link_libraries(talker ${catkin_LIBRARIES})
+add_dependencies(talker beginner_tutorials_generate_messages_cpp)
+
+add_executable(listener src/listener.cpp)
+target_link_libraries(listener ${catkin_LIBRARIES})
+add_dependencies(listener beginner_tutorials_generate_messages_cpp)
+
+切换目录并执行catkin_make运行命令
+cd ~/catkin_ws
+catkin_make
+
+//在使用程序之前需要先把程序注册
+cd ~/catkin_ws
+source ./devel/setup.bash
+
+运行talker节点：rosrun beginner_tutorials talker
+运行listener节点：rosrun beginner_tutorials listener
+
+新建msg:
+先要注册工作区：source devel/setup.bash
+roscd beginner_tutorials
+mkdir msg
+echo "int32 A
+int32 B
+int32 C" > msg/Num.msg
+
+//为了转换为C++，python等语言，打开package.xml添加
+<build_depend>message_generation</build_depend>   //一个构建时需要，一个执行时需要
+  <exec_depend>message_runtime</exec_depend>       
+打开CMakeLists.txt,修改如下：
+# Do not just add this to your CMakeLists.txt, modify the existing text to add message_generation before the closing parenthesis
+find_package(catkin REQUIRED COMPONENTS
+   roscpp
+   rospy
+   std_msgs
+   message_generation
+)
+
+catkin_package(
+  
+  CATKIN_DEPENDS message_runtime
+ )
+
+add_message_files(
+  FILES
+  Num.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
+
+rosmsg show beginner_tutorials/Num
+rosmsg show Num
+
+//新建srv
+roscd beginner_tutorials
+mkdir srv
+
+roscp roscp rospy_tutorials AddTwoInts.srv srv/AddTwoInts.srv
+
+打开package.xml添加：
+<build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>     //上面添加的不用加了
+
+修改CMakeLists.txt文件：
+# Do not just add this line to your CMakeLists.txt, modify the existing line
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  std_msgs
+  message_generation
+)   //上面添加的不用加了
+
+add_service_files(
+  FILES
+  AddTwoInts.srv
+)
+
+rossrv show beginner_tutorials/AddTwoInts
+rossrv show AddTwoInts
+
+修改CMakeLists.txt
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
+
+cd ~/catkin_ws
+catkin_make
+
+使用新建的srv文件：
+创建俩个节点文件
+example2_a.cpp
+#include "ros/ros.h"
+#include "beginner_tutorials/AddTwoInts.h" //包含先前所创建的srv文件
+
+//对3个变量求和，并将计算结果发生给其他节点，Request为上一部分的请求，而Response为下一部分的响应
+bool add(beginner_tutorials::AddTwoInts::Request  &req,
+         beginner_tutorials::AddTwoInts::Response &res)
+{
+  res.sum = req.A + req.B + req.C;
+  ROS_INFO("request: A=%d, B=%d C=%d", (int)req.A, (int)req.B, (int)req.C);
+  ROS_INFO("sending back response: [%d]", (int)res.sum);
+  return true;
+}
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "add_3_ints_server");
+  ros::NodeHandle n;
+
+  //创建服务并在ROS中发布广播
+  ros::ServiceServer service = n.advertiseService("add_3_ints", add);
+
+  ROS_INFO("Ready to add 3 ints."); //在命令行窗口输出信息
+  ros::spin();
+
+  return 0;
+}
+
+example2_a.cpp
+#include "ros/ros.h"
+#include "beginner_tutorials/AddTwoInts.h"
+#include <cstdlib>
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "add_3_ints_client");
+  if (argc != 4)
+  {
+    ROS_INFO("usage: add_3_ints_client A B C ");
+    return 1;
+  }
+
+  ros::NodeHandle n;
+  //以add_3_ints为名称创建一个服务的客户端
+  ros::ServiceClient client = n.serviceClient<beginner_tutorials::AddTwoInts>("add_3_ints");
+  //下面创建srv文件的一个实例，并且加入需要发生的数据值
+  beginner_tutorials::AddTwoInts srv;
+  srv.request.A = atoll(argv[1]);
+  srv.request.B = atoll(argv[2]);
+  srv.request.C = atoll(argv[3]);
+
+  //调用服务并发生数据。如果调用成功，call()函数会返回true；如果没成功，call()函数会返回false
+  if (client.call(srv))
+  {
+    ROS_INFO("Sum: %ld", (long int)srv.response.sum);
+  }
+  else
+  {
+    ROS_ERROR("Failed to call service add_two_ints");
+    return 1;
+  }
+
+  return 0;
+}
+
+修改CMakeLists.txt文件
+add_executable(chap2_example2_a src/example2_a.cpp)
+add_executable(chap2_example2_b src/example2_b.cpp)
+
+add_dependencies(chap2_example2_a beginner_tutorials_generate_messages_cpp)
+add_dependencies(chap2_example2_b beginner_tutorials_generate_messages_cpp)
+
+target_link_libraries(chap2_example2_a ${catkin_LIBRARIES})
+target_link_libraries(chap2_example2_b ${catkin_LIBRARIES})
+
+cd ~/catkin_ws
+catkin_make
+
+rosrun beginner_tutorials chap2_example2_a
+rosrun beginner_tutorials chap2_example2_b 1 2 3
+
+使用新建的msg文件：
+example3_a.cpp
+
+#include "ros/ros.h"
+#include "beginner_tutorials/Num.h"
+#include <sstream>
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "example3_a");
+  ros::NodeHandle n;
+  ros::Publisher pub = n.advertise<beginner_tutorials::Num>("message", 1000);
+  ros::Rate loop_rate(10);
+  while (ros::ok())
+  {
+    //这里使用了自定义消息类型int32 A，int32 B,int32 C
+    beginner_tutorials::Num msg;
+    msg.A = 1;
+    msg.B = 2;
+    msg.C = 3;
+    pub.publish(msg);
+    ros::spinOnce();
+    loop_rate.sleep();
+  }
+  return 0;
+}
+
+example3_b.cpp
+
+#include "ros/ros.h"
+#include "beginner_tutorials/Num.h"
+
+void messageCallback(const beginner_tutorials::Num::ConstPtr& msg)
+{
+  //这里使用了自定义消息类型int32 A，int32 B,int32 C
+  ROS_INFO("I heard: [%d] [%d] [%d]", msg->A, msg->B, msg->C);
+}
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "example3_b");
+  ros::NodeHandle n;
+  ros::Subscriber sub = n.subscribe("message", 1000, messageCallback);
+  ros::spin();
+  return 0;
+}
+
+
+修改CMakeLists.txt文件
+add_executable(example3_a src/example3_a.cpp)
+add_executable(example3_b src/example3_b.cpp)
+
+add_dependencies(example3_a beginner_tutorials_generate_messages_cpp)
+add_dependencies(example3_b beginner_tutorials_generate_messages_cpp)
+
+target_link_libraries(example3_a ${catkin_LIBRARIES})
+target_link_libraries(example3_b ${catkin_LIBRARIES})
+
+catkin_make
+rosrun beginner_tutorials example3_a
+rosrun beginner_tutorials example3_b
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
