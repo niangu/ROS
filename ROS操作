@@ -386,20 +386,156 @@ catkin_make
 rosrun beginner_tutorials example3_a
 rosrun beginner_tutorials example3_b
 
+查看依赖：
+rospack depends1 beginner_tutorials //查看包依赖
+roscd beginner_tutorials 
+cat package.xml
+rospack depends1 rospy //查看间接依赖
+rospack depends beginner_tutorials //递归所有依赖项
+一个package.xml的构成：
+描述标签
+<description>The beginner_tutorials package</description>
+维护者标签
+<!--<maintainer email="jane.doe@example.com">Jane Doe</maintainer> -->
+<maintainer email="user@todo.todo">user</maintainer>
+许可证标签
+<!--   BSD, MIT, Boost Software License, GPLv2, GPLv3, LGPLv2.1, LGPLv3 -->
+<license>TODO</license>
+依赖标签：build_depend,buildtool_depend,exec_depend,test_depend
+最终package.xml文件：
+<?xml version="1.0"?>
+<package format="2">
+  <name>beginner_tutorials</name>
+  <version>0.1.0</version>
+  <description>The beginner_tutorials package</description>
+    
+  <maintainer email="you@yourdomain.tld">Your Name</maintainer>
+  <license>BSD</license>
+  <url type="website">http://wiki.ros.org/beginner_tutorials</url>
+  <author email="you@yourdomain.tld">Jane Doe</author>
+   
+  <buildtool_depend>catkin</buildtool_depend>
+   
+  <build_depend>roscpp</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>std_msgs</build_depend>
+   
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+   
+</package>
 
 
+rosrun turtlesim turtlesim_node //显示乌龟
+rosrun turtlesim turtle_teleop_key //使用箭头操作乌龟
+rosrun rqt_graph rqt_graph
+rostopic echo /turtle1/cmd_vel //输出信息到屏幕
+rostopic echo /turtle1/command_velocity
+rostopic type /turtle1/cmd_vel
+rosmsg show geometry_msgs/Twist
+rostopic type /turtle1/command_velocity
+rosmsg show turtlesim/Velocity
+rostopic pub -1 /turtle1/cmd_vel geometry_msgs/Twist -- '[2.0,0.0,0.0]' '[0.0,0.0,1.8]'
+rostopic pub /turtle1/cmd_vel geometry_msgs/Twist -r 1 -- '[2.0,0.0,0.0]' '[0.0,0.0,-1.8]'
+rostopic hz /turtle1/pose
+rostopic type /turtle1/cmd_vel | rosmsg show
+rostopic type /turtle1/command_velocity | rosmsg show
 
+rosrun rqt_plot rqt_plot //显示后在过滤条件里输入节点
 
+//节点观察工具
+rosrun rqt_console rqt_console
+rosrun rqt_logger_level rqt_logger_level
 
+使用roslaunch
+roscd beginner_tutorials
+cd ~/catkin_ws
+source devel/setup.bash
+roscd beginner_tutorials
+mkdir launch
+cd launch
 
+turtlemimic.launch
+<launch>
+    
+  <group ns="turtlesim1">
+    <node pkg="turtlesim" name="sim" type="turtlesim_node"/>
+  </group>
+    
+  <group ns="turtlesim2">
+    <node pkg="turtlesim" name="sim" type="turtlesim_node"/>
+  </group>
+   
+  <node pkg="turtlesim" name="mimic" type="mimic">
+    <remap from="input" to="turtlesim1/turtle1"/>
+    <remap from="output" to="turtlesim2/turtle1"/>
+  </node>
+</launch> 
+   </launch>
 
+roslaunch beginner_tutorials turtlemimic.launch
+rostopic pub /turtlesim1/turtle1/cmd_vel geometry_msgs/Twist -r 1 -- '[2.0, 0.0, 0.0]' '[0.0, 0.0, -1.8]'
+或者：rostopic pub /turtlesim1/turtle1/command_velocity turtlesim/Velocity -r 1 -- 2.0  -1.8
+rqt_graph
 
+//保存记录操作
+rosrun turtlesim turtlesim_node
+rosrun turtlesim turtle_teleop_key
+mkdir ~/bagfiles
+cd ~/bagfiles
+rosbag record -a
+rosbag info <your bagfile>
+rosbag play <your bagfile>
 
+rosrun turtlesim turtlesim_node
+rosrun turtlesim turtle_teleop_key
+rosbag record -O subset /turtle1/cmd_vel /turtle1/pose //记录特定的主题
 
+//输出调试信息
+ROS_INFO("My INFO message,");
+const double val=3.14
+ROS_INFO("My INFO message with argument:%f", val);
+ROS_INFO("My INFO stream messgage with argument:"<<val);
+ROS_<LEVEL>[...]------->LEVEL可以为：DEBUG（绿色），INFO（白色），WARN（黄色），ERROR（红色），FATAL（紫色）
 
+找到main()函数，在ros::init代码之后，插入以下代码：
+//Set the logging level manually to DEBUG
+ROSCONSOLE_AUTOINIT;
+log4cxx::LoggerPtr my_logger = log4cxx::Logger::getLogger(ROSCONSOLE_DEFAULT_NAME);
+my_logger->setLevel(ros::console::g_level_lookup[ros::console::levels::Debug]);
+不需要包含任何头文件，但在CMakeLists.txt文件中必须将头文件链接到log4cxx库：
+find_library(LOG4CXX_LIBRARY log4cxx)
+同事把节点链接过去：
+rosbuild_add_executable(example1 src/example1.cpp)
+target_link_libraries(example1 ${LOG4CXX_LIBRARY})
 
+//信息命名
+ROS_INFO_STREAM_NAMED("named_msg","My named INFO stream messgae; val="<<val);
 
+//编译时宏记录去除器
+可能用到的宏包括：
+ROSCONSOLE_SEVERITY_DEBUG,ROSCONSOLE_SEVERITY_INFO,ROSCONSOLE_SEVERITY_WARN,ROSCONSOLE_SEVERITY_ERROR,
+ROSCONSOLE_SEVERITY_FATAL,ROSCONSOLE_SERVERITY_NONE
+ROSCONSOLE_MIN_SEVERITY宏在ros/console.h文件中，默认为DEBUG调试
+若要仅显示ERROR或更高级别的调试信息，在节点中：
+#define ROSCONSOLE_MIN_SEVERITY ROSCONSOLE_SEVERITY_DEBUG
 
+//条件显示与过滤信息
+ROS_INFO_STREAM_COND(
+val<0.,"My conditional INFO stream message; val ("<<val<<")"<0");
+ROS_INFO_STREAM_COND(val>=0.,"MY conditional INFo stream message;val("<<val<<")>=0");
+ROS_INFO_STREAM_COND("cond_named_msg",val>=0.,"My conditional INFO stream message;val ("<<val<<")>=0");
+//其也可以是命名的信息
+//在循环中单次显示
+for(int i=0;i<10;++i)
+{
+ROS_INFO_STREAM_ONCE("MY once INFO stream message;i="<<i);//只在i=0是显示一次
+}
+
+检测潜在问题：
+roscd chapter3_tutorials
+roswtf
 
 
 
