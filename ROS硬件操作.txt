@@ -1,0 +1,527 @@
+rosrun rviz rviz
+游戏手柄：
+将游戏手柄连接到你的电脑，检查是否识别：
+ls /dev/input
+所创建的端口是js0
+我们使用jstest检查它是否工作：
+sudo jstest /dev/input/js0
+输出如：Axes:0: 0 1: 0 2: 0 Buttons: 0:off 1:off 2:off 3:off 4:off ....,移动游戏杆移动，就会产生数值变化
+直接在ROS系统中测试它的功能，为了达到测试的目的，我们需要使用joy和joy_node功能包。
+sudo apt-get install ros-melodic-joy
+rosdep install joy
+rosrun joy joy_node
+为了查看节点所发布的信息，我们可以使用以下命令：
+rostopic echo /joy
+rosnode type /joy
+//使用游戏杆数据在turtlesim中移动海龟
+rosrun turtlesim turtlesim_node
+rostopic list
+现在我们需要知道主题的类型:
+rostopic type /turtle1/cmd_vel --->输出turtlesim/Velocity
+查看消息的内容：rosmsg show turtlesim/Velocity
+在chapter4_tutorials/src目录下创建一个新的文件example.1.cpp:
+#include<ros/ros.h>
+#include<turtlesim/Velocity.h>
+#include<sensor_msgs/Joy.h>
+#include<iostream>
+using namespace std;
+
+class TeleopJoy{
+public:
+TeleopJoy();
+private:
+void callBack(const sensor_msgs::Joy::ConstPtr& joy);
+ros::NodeHandle n;
+ros::Publisher pub;
+ros::Subscriber sub;
+int i_velLinear, i_velAngular;
+};
+
+TeleopJoy::TeleopJoy()
+{
+n.param("axis_linear",i_velLinear, i_velLinear);
+n.param("axis_angular",i_velAngular,i_velAngular);
+pub = n.advertise<turtles::Velocity>("turtle1/command_velocity",1);
+sub = n.subscribe<sensor_msgs::Joy>("joy",10,&TeleopJoy::callBack,this);
+}
+
+void TeleopJoy::callBack(const sensor_msgs::Joy::ConstPtr& joy)
+{
+turtlesim::Velocity vel;
+vel.angular = joy->axes[i_velAngular];
+vel.linear = joy->axes[i_velLinear];
+pub.publish(vel);
+}
+
+int main(int argc, char** argv)
+{
+ros::init(argc, argv,"teleopJoy");
+TeleopJoy teleop_turtle;
+ros::spin();
+}
+
+在chapter4_ tutorials/src文件夹下创建一个新文件example1.launch"：
+<launch>
+
+<node pkg="turtlesim" type="turtlesim_node" name="sim"/>
+<node pkg="chapter4_tutorials" type="example1" name="example1" />
+<param name="axis_linear" value="1" type="int" />
+<param name="axis_angular" value="0" type="int" />
+
+<node respawn="true" pkg="joy" type="joy" name="teleopJoy">
+	<param name="dev" type="string" value="/dev/input/js0" />
+	<param name="deadzone" value="0.12" />
+</node>
+
+</launch>
+
+Hokuyo激光雷达能够实现机器人导航和实时地图创建的设备：
+Ubuntu18.04配置驱动网址参考：https://blog.csdn.net/hajungong007/article/details/79210140
+sudo apt-get install ros-melodic-urg-node
+安装依赖：sudo apt-get install ros-melodic-urg-c
+
+连上雷达：ls -l /dev/ttyACM0
+sudo chmod a+rw /dev/ttyACM0
+驱动使用参考此网址：http://wiki.ros.org/urg_node
+rosrun urg_node getID /dev/ttyACM0-------->输出：Device at /dev/ttyACM0 has ID H0807228
+rosrun urg_node getID /dev/ttyACM0 --H0807228
+rostopic list   --->/scan是节点正在发布消息的主题
+rostopic type /scan ---->sensor_msgs/LaserScan
+rosmsg show sensor_msgs/LaserScan
+rostopic echo /scan
+rosrun rviz rviz -d `rospack find hokuyo_node`/hokuyo_test.vcg
+
+访问和修改激光雷达数据：
+example2.cpp:
+#include<ros/ros.h>
+#include"std_msgs/String.h"
+#include<sensor_msgs/LaserScan.h>
+#include<stdio.h>
+
+using namespace std;
+class Scan2
+{
+public:
+Scan2();
+private:
+ros::Publisher scan_pub;
+ros::Subscriber scan_sub;
+void scanCallBack(const sensor_msgs::LaserScan::ConstPtr& scan2);
+};
+
+Scan2::Scan2()
+{
+scan_pub = n.advertise<sensor_msgs::LaserScan>("/scan2",1);
+scan_sub = n.subscribe<sensor_msgs::LaserScan>("/scan",1,&Scan2::scanCallBack,this);
+}
+
+void Scan2::scanCallBack(const sensor_msgs::LaserScan::ConstPtr& scan2)
+{
+int ranges = scan2->ranges.size();
+//populate the LaserScan message
+sensor_msgs::LaserScan scan;
+scan.header.stamp = scan2->header.stamp;
+scan.header.frame_id = scan2->header.frame_id;
+scan.angle_min = scan2->angle_min;
+scan.angle_max = scan2->angle_max;
+scan.angle_increment = scan2->angle_increment;
+scan.time_increment = scan2->time_increment;
+scan.range_min = 0.0;
+scan.range_max = 100.0;
+scan.ranges.resize(ranges);
+
+for(int i=0;i<ranges;++i)
+{
+scan.ranges[i] = scan2->ranges[i] + 1;
+}
+scan_pub.publish(scan);
+}
+
+int main(int argc,char** argv)
+{
+ros::init(argc,argv,"example2_laser_scan_publisher");
+Scan2 scan2;
+ros::spin();
+}
+创建启动文件example2.launch:
+<launch>
+	<node pkg="kokuyo_node" type="hokuyo_node" name="hokuyo_node"/>
+	<node pkg="rviz" type="rviz" name="rviz" args="-d $(find chapter4_tutorials)/example2.vcg"/>
+	<node pkg="chapter4_tutorials" type="example2" name="example2" />
+</launch>
+
+
+使用Kinect传感器查看3D环境：
+1.一个彩色VGA视频摄像头来查看彩色的世界
+2.一个深度传感器，包括一个红外色斑投影和一个单色CMOS传感器配合工作，获取物体的深度信息并转换为3D数据。
+3.用于分离使用者的声音和室内噪音的麦克风阵列
+Ubuntu18.04配置kinect驱动：
+#下载libfreenect2源代码
+git clone https://github.com/OpenKinect/libfreenect2.git     
+
+#安装cmake编译器和必要的依赖
+sudo apt-get install build-essential cmake pkg-config libturbojpeg libjpeg-turbo8-dev mesa-common-dev freeglut3-dev libxrandr-dev libxi-dev   
+sudo apt-get install libglfw3-dev
+sudo apt-get install libopenni2-dev
+
+#安装最新版libusb-dev
+sudo apt-get install libusb-dev 
+
+#缺少这个依赖下面会报错[来自github解答](https://github.com/OpenKinect/libfreenect2/issues/984)   
+sudo apt-get install libturbojpeg0-dev
+
+#开始编译过程
+cd libfreenect2
+mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/freenect2    #地址可以修改，但是后面对应也有些需要修改。
+make
+sudo make install
+
+#设定udev rules:(填好自己libfreenect2的路径)
+sudo cp libfreenect2/platform/linux/udev/90-kinect2.rules /etc/udev/rules.d/
+sudo apt-get install libopenni2-dev  //安装OpenNI2
+cd ~/catkin_ws           
+catkin_make -DCMAKE_BUILD_TYPE="Release"      #编译
+
+#如果没有添加永久环境变量，则每次都需要source以下
+source ~/catkin_ws/devel/setup.bash 
+#添加ros永久环境变量
+echo "source ~/catkin_ws/devel/setup.sh" >> ~/.bashrc
+
+roslaunch kinect2_bridge kinect2_bridge.launch    #运行kinect2自带的launch
+
+rosrun kinect2_viewer kinect2_viewer              #查看运行结果。
+
+发送和查看Kinect数据：
+rostopic list
+rosrun image_view image_view image:=/camera/rgb/image_color
+rosrun image_view image_view image:=/camera/depth/image
+传递点云数据的主题：/camera/depth/points,/camera/depth_registered/points
+查看消息的具体字段：
+rostopic type /topic_name | rosmsg show
+rostopic type /camera/depth/points | rosmsg show
+
+创建和使用Kinect示例：
+example3.cpp：
+#include<ros/ros.h>
+#include<sensor_msgs/PointCloud2.h>
+#include<pcl/ros/conversions.h>
+#include<pcl/point_cloud.h>
+#include<pcl/point_types.h>
+#include<pcl/filters/voxel_grid.h>
+
+ros::Publisher pub;
+void cloud_cb(const sensor_msgs::PointCloud2ConstPtr& input)
+{
+//...do data processing
+sensor_msgs::PointCloud2 output;
+pcl::VoxelGrid<sensor_msgs::PointCloud2>sor;
+sor.setInputCloud(input);
+sor.setLeafSize(0.02f,0.02f,0.02f); //改变网格大小，增加，更低的分辨率，点云上的点越少
+sor.filter(output);
+//Publish the data
+pub.publish(output);
+}
+int main(int argc,char** argv)
+{
+ros::init(argc,argv,"my_pcl_tutorial");
+ros::NodeHandle nh;
+ros::Subscriber sub=nh.subscribe("/camera/depth/points",1,cloud_cb);
+auto pub = nh.advertise<sensor_msgs::PointCloud2>("output",1);
+ros::spin();
+}
+//以后内容摘抄自书中，Ubuntu18.04驱动不太好找，找到不太好配置
+//伺服电动机-Dynamixel
+:移动传感器，轮子和机械臂
+sudo apt-get install ros-fuerte-dynamixel-motor   --->dev ttyUSBX接口
+roslaunch dynamixel_tutorials controller_manager.launh 
+
+Dynamixel发送和接收运动命令：
+rostopic list
+rostopic echo /motor_states/pan_tilt_port
+roslaunch dynamixel_tutorials controller_spawner.launch
+rostopic type /tilt_controller/command
+
+通过如下指令发布主题：
+rostopic pub /tilt_controller/command std_msgs/Float64 -- 0.5
+
+//创建和使用伺服电动机示例：
+example4.cpp
+#include<ros/ros.h>
+#include<std_msgs/Float64.h>
+#include<stdio.h>
+
+using namespace std;
+class Dynamixel{
+private:
+ros::NodeHandle n;
+ros::Publisher pub_n;
+public:
+Dynamixel();
+int moveMotor(double position);
+};
+Dynamixel::Dynamixel()
+{
+pub_n = n.advertise<std_msgs::Float64>("/tilt_controller/command",1);
+}
+int Dynamixel::moveMotor(double position)
+{
+std_msgs::Float64 aux;
+aux.data = position;
+pub_n.publish(aux);
+return 1;
+}
+
+int main(int argc,char** argv)
+{
+ros::init(argc,argv,"example4_move_motor");
+Dynamixel motors;
+
+float counter = -180;
+ros::Rate loop_rate(100);
+
+while(ros::ok())
+{
+if(counter<180)
+{
+motors.moveMotor(counter*3.14/180);
+counter++;
+}else{
+counter = -180;
+}
+loop_rate.sleep();
+}
+}
+
+
+//Arduino添加更多的传感器和执行机构
+sudo apt-get install ros-fuerte-rosserial
+rosstack profile
+rospackage profile
+
+
+example5_1.ino:
+#include<ros.h>
+#include<std_msgs/String.h>
+
+ros::NodeHandle nh;
+
+std_msgs::String str_msg;
+ros::Publisher chatter("chatter",&str_msg);
+char hello[19] = "chapter4_tutorials";
+
+void setup()
+{
+nh.initNode();
+nh.advertise(chatter);
+}
+
+void loop()
+{
+str_msg.data = hello;
+chatter.publish(&str_msg);
+nh.spinOnce();
+delay(1000);
+}
+
+rosrun rosserial_python serial_node.py /dev/ttyUSB0
+rostopic echo chatter //查看Arduino发出的消息
+例子:Arduino订阅一个主题并改变连接到PIN 13上的LED灯的状态，示例名称blink,在Arduino IDE->File>Examples>ros_lib>Blink中可以找到：
+
+#include<ros.h>
+#include<std_msgs/Empty.h>
+
+ros::NodeHandle nh;
+void messageCb(const std_msgs::Empty& toggle_msg)
+{
+digitalWrite(13,HIGH-digitalRead(13));
+}
+ros::Subscriber<std_msgs::Empty>sub("toggle_led",&messageCb);
+
+void setup()
+{
+pinMode(13,OUTPUT);
+nh.initNode();
+nh.subscribe(sub);
+}
+
+void loop()
+{
+nh.spinOnce();
+delay(1);
+}
+
+启动节点与Arduino板进行通信：
+rosrun rosserial_python serial_node.py /dev/ttyUSB0
+改变LED灯的状态L
+rostopic pub toggle_led std_msgs/Empty -once --->再次改变状态需要再次发布消息
+现在你能够使用ROS中所有支持Arduino的设备了，你可以使用各种廉价的传感器和执行机构装备你的机器人了
+
+
+惯性测量模组-----Xsens MTi---->测量报告被测设备速度，方向和重力的电子设备能够将加速度计和陀螺仪甚至磁场强度计等传感器的数据进行综合。，还有像MicroStrain 3DM-GX2或者带有wii Motion Plus的wiimote
+MicroStrain 3DM-GX2 IMU:http://www.ros.org/wiki/micristrain_3dmgx2_imu
+Wiimote with Wii Motion Plus:http://www.ros.org/wiki/wiimote
+
+svn co http://isr-uc-ros-pkg.googlecode.com/svn/stacks/lse_imu_drivers/trunk/     //安装lse_xsens_mti驱动
+需要同时安装俩个功能包:
+svn co http://isr-uc-ros-pkg.googlecode.com/svn/stacks/serial_communication/trunk/cereal_port/
+sudo apt-get install ros-fuerte-gps-umd
+//刷新功能包和功能包集的安装记录
+rosstack profile
+rospack profile
+使用IMU:
+rosrun lse_imu_drivers mti_node
+确定设备已经连接到了/dev/ttyUSB0端口上，你必须通过代码更改端口或者使用参数服务器
+rostopic list
+rostopic type /imu/data
+rostopic type /imu/data | rosmsg show
+
+创建和使用Xsens示例：
+使用IMU来移动turtlessim。需要从四元数中取出数据并将其转换为欧拉角（滚动，俯仰和偏航）并且在x轴和y轴的旋转值（滚动和俯仰）作为让小海龟进行线性和角度运动的值
+在chapter4_tutorials/src/中创建example6.cpp:
+#include<ros/ros.h>
+#include<turtlesim/Velocity.h>
+#include<sensor_msgs/Imu.h>
+#include<iostream>
+#include<tf/LinearMath/Matrix3x3.h>
+#include<tf/LinearMath/Quaternion.h>
+
+using namespace std;
+
+class TeleopImu
+{
+public:
+TeleopImu();
+private:
+void callBack(const sensor_msgs::Imu::ConstPtr& imu);
+ros::NodeHandle n;
+ros::Publisher pub;
+ros::Subscriber sub;
+};
+
+TeleopImu::TeleopImu()
+{
+pub = n.advertise<turtlesim::Velocity>("turtle1/command_velocity",1);
+sub = n.subscribe<sensor_msgs::Imu>("imu/data",10,&TeleopImu::callBack, this);
+}
+
+void TeleopImu::callBack(const sensor_msgs::Imu::ConstPtr& imu)
+{
+turtlesim::Velocity vel;
+tf::Quaternion bq(imu->orientation.x,imu->orientation.y,imu->orientation.z,imu->orientation.w);
+double roll,pitch,yaw;
+tf::Matrix3x3(bq).getRPY(roll,pitch,yaw);
+vel.angular = roll;
+vel.linear = pitch;
+pub.publish(vel);
+}
+
+int main(int argc, char** argv)
+{
+ros::init(argc,argv,"teleopImu");
+TeleopImu teleop_turtle;
+ros::spin();
+}
+
+使用低成本惯性测量模组IMU—10自由度：
+和Xsens Mti相似，都有加速度计(x3)，磁场强度计(x3),气压计(x1)和陀螺仪(x3).通过I2C接口能够轻松的控制它。
+这块板子具有以下传感器：
+ADXL345：这是一个高精度（13-bit）三轴加速度计，最高测量范围为+-16g.这个传感器广泛地被用于移动设备终端。在倾角测量时它能够测量静态的重力加速度，同时也能够很好地完成移动和振动的动态加速度计算。
+HMC5883L：这个传感器是用来测量低磁场强度传感，并配有针对低成本指南针和磁强计等设备的数字化接口。
+BMP085：这是高精度大气压力传感器用于先进的移动应用。它性能强大，具有最高0.03hPa的绝对精度和3uA的超低功耗。
+L3G4200D：这是高精度(16-bit)三轴陀螺仪，测量范围达到美秒2000度（d/s）.这个陀螺仪能够同时对三个轴的转动量进行测量。
+这块版子通过I2C接口进行控制，我们能够使用Arduino来控制它。
+从Arduino的GND和5V分别连线到IMU的GND和Vcc.
+串口数据链路(SDL)需要连接到模拟量pin4,串口时钟(SCK)需要连接到模拟量pin5。连错将无法通信。
+https://github.com/jenschr/Arduino-libraries
+编写Arduino程序来获取加速度计的数据并在ROS中发布:
+example7.ino:
+
+#include<ros.h>
+#include<std_msgs/Float32.h>
+#include<Wire.h>
+#include<ADXL345.h>
+
+ADXL345 Accel;
+
+ros::NodeHandle nh;
+std_msgs::Float32 velLinear_x;
+std_msgs::Float32 velAngular_z;
+
+ros::Publisher velLinear_x_pub("velLinear_x",&velLinear_x);
+ros::Publisher velAngular_z_pub("velAngular_z",&velAngular_z);
+
+void setup()
+{
+nh.initNode();
+nh.advertise(velLinear_x_pub);
+nh.advertise(velAngular_z_pub);
+
+Wire.begin();
+delay(100);
+Accel.set_bw(ADXL345_BW_12);
+}
+
+void loop()
+{
+double acc_data[3];
+Accel.get_Gxyz(acc_data);
+
+velLinear_x.data=acc_data[0];
+velAngular_z.data = acc_data[1];
+
+velLinear_x_pub.publish(&velLinear_x);
+velAngular_z_pub.publish(&velAngular_z);
+
+nh.spinOnce();
+delay(10);
+}
+
+创建一段新程序用于使用传感器数据生成在turtlesim中移动小海龟的指令,目标是使用10DoF传感器板子作为turtlesim的输入并使用加速度计移动小海龟。
+example8.cpp:
+#include<ros/ros.h>
+#include<turtlesim/Velocity.h>
+#include<std_msgs/Float32.h>
+
+class TeleopImu
+{
+public:
+TeleopImu();
+private:
+void velLinearCallBack(const std_msgs::Float32::ConstPtr& vx);
+void velAngularCallBack(const std_msgs::Float32::ConstPtr& wz);
+ros::NodeHandle n;
+ros::Publisher pub;
+ros::Subscriber velAngular_z_sub;
+ros::Subscriber velLinear_x_sub;
+turtlesim::Velocity vel;
+}
+TeleopImu::TeleopImu()
+{
+pub = n.advertise<turtlesim::Velocity>("turtle1/command_velocity",1);
+velLinear_x_sub = n.subscribe<std_msgs::Float32>("/velLinear_x",1,&TeleopImu::velLinearCallBack,this);
+velAngular_z_sub = n.subscribe<std_msgs::Float32>("/velAngular_z",1,&TeleopImu::velAngularCallBack,this);
+}
+
+void TeleopImu::velAngularCallBack(const std_msgs::Float32::ConstPtr& wz)
+{
+vel.linear = -1*wz->data;
+pub.publish(vel);
+}
+void TeleopImu::velLinearCallBack(const std_msgs::Float32::ConstPtr& vx)
+{
+vel.angular = vx->data;
+pub.publish(vel);
+}
+
+int main(int argc,char** argv)
+{
+ros::init(argc,argv,"example8");
+TeleopImu teleop_turtle;
+ros::spin();
+}
+
+编译代码，连接Arduino:
+rosrun rosserial_python serial_node.py
+rosrun turtlesim turtlesim_node
+rosrun chapter4_tutorials example8
