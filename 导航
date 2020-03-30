@@ -1,0 +1,675 @@
+导航需要的三个包：
+move_base:根据参照的消息进行路径规划，使移动机器人到达指定的位置
+gmapping:根据激光数据（或者深度数据模拟的激光数据）建立地图；
+amcl:根据已经有的地图进行定位
+
+sensor transforms:传感器数据坐标转换，只要把base_laser和base_link俩者之间的位置关系告诉tf就可以自动转换了。
+sensor sources:机器人导航传感器数据输入：
+激光传感数据
+点云数据
+base controller:
+在导航过程中，该部分负责将之前得出来的数据封装成具体的线速度和转向角度信息（Twist）,并且发布给硬件平台
+map_server:
+在ROS的导航中，costmap_2d这个包主要负责根据传感器的信息建立和更新二维或三维的地图。ROS的地图（costmap）采用网格（grid）的形式，每个网格的值从0~255，分为三种状态：占用（有障碍物）、无用（空闲的）、未知。具体状态和值的对应关系如下：
+（1） Lethal（致命的）:机器人的中心与该网格的中心重合，此时机器人必然与障碍物冲突。
+（2） Inscribed（内切）：网格的外切圆与机器人的轮廓内切，此时机器人也必然与障碍物冲突。
+（3） Possibly circumscribed（外切）：网格的外切圆与机器人的轮廓外切，此时机器人相当于靠在障碍物附近，所以不一定冲突。
+（4） Freespace（自由空间）：没有障碍物的空间。
+（5） Unknown（未知）：未知的空间。
+
+ROS导航功能包集：
+创建转换：
+导航功能包集需要知道传感器，轮子和关节的位置
+，我们使用tf软件库来完成，它会管理坐标变幻树
+创建广播机构tf_broadcaster.cpp：
+#include<ros/ros.h>
+#include<tf/transform_broadcaster.h>
+
+int main(int argc, char** argv)
+{
+ros::init(argc,argv,"robot_tf_publisher");
+ros::NodeHandle n;
+
+ros::Rate r(100);
+
+tf::TransformBroadcaster broadcaster;
+
+while(n.ok())
+{
+broadcaster.sendTransform(tf::StampedTransform(tf::Transform(tf::Quaternion(0,0,0,1),tf::Vector3(0.1,0.0,0.2)),
+ros::Time::now(),"base_link","base_laser"));
+r.sleep();
+}
+}
+将下面添加到CMakelist.txt:
+add_executable(tf_broadcaster src/tf_broadcaster.cpp)
+target_link_libraries(tf_broadcaster ${catkin_LIBRARIES})\
+
+创建侦听器tf_listener.cpp：
+#include <ros/ros.h>
+#include <geometry_msgs/PointStamped.h>
+#include <tf/transform_listener.h>
+
+void transformPoint(const tf::TransformListener& listener){
+  //we'll create a point in the base_laser frame that we'd like to transform to the base_link frame
+
+  geometry_msgs::PointStamped laser_point;
+  laser_point.header.frame_id = "base_laser";
+
+  //we'll just use the most recent transform available for our simple example
+  laser_point.header.stamp = ros::Time();
+
+  //just an arbitrary point in space
+  laser_point.point.x = 1.0;
+  laser_point.point.y = 2.0;
+  laser_point.point.z = 0.0;
+
+  geometry_msgs::PointStamped base_point;
+ 
+
+  //listener.waitForTransform(
+
+  listener.transformPoint("base_link", laser_point, base_point);
+
+
+//  listener.lookupTransform("base_link", "wheel_2", ros::Time(0), ros::Duration(10.0));
+  ROS_INFO("base_laser: (%.2f, %.2f. %.2f) -----> base_link: (%.2f, %.2f, %.2f) at time %.2f",
+        laser_point.point.x, laser_point.point.y, laser_point.point.z,
+        base_point.point.x, base_point.point.y, base_point.point.z, base_point.header.stamp.toSec());
+
+}
+
+int main(int argc, char** argv){
+  ros::init(argc, argv, "robot_tf_listener");
+  ros::NodeHandle n;
+
+  tf::TransformListener listener(ros::Duration(10));
+
+  //we'll transform a point once every second
+  ros::Timer timer = n.createTimer(ros::Duration(1.0), boost::bind(&transformPoint, boost::ref(listener)));
+
+  ros::spin();
+
+}
+添加相关到CMakelist.txt
+catkin_make shcrobot_description
+rosrun shcrobot_description tf_broadcaster
+rosrun shcrobot_description tf_listener
+得到了点的坐标或关节之间的相对位置
+查看坐标变换树，先运行机器人
+rosrun tf view_frames
+
+发布传感器信息
+导航功能包集仅支持使用平面激光雷达传感器，所以你的传感器必须使用以下格式发布数据：sensor_msgs/LaserScan或sensor_msgs/PointCloud仿真出来额激光雷达在base_scan/scan坐标系上发布数据，使用我们做好的.urdf文件里面配置过坐标变换树，而且激光雷达也能够使用正确的格式发布数据
+可能用到一个ROS没有提供官方驱动的激光雷达，这时你需要自己编写一个节点来发布传感器数据，其数据格式需要是sensor_msgs/LaserScan
+rosmsg show sensor_msgs/LaserScan
+创建激光雷达节点：
+#include <ros/ros.h>
+
+#include <sensor_msgs/LaserScan.h>
+
+int main(int argc, char** argv){
+
+ ros::init(argc, argv, "laser_scan_publisher");
+
+ ros::NodeHandle n;
+
+ ros::Publisher scan_pub = n.advertise<sensor_msgs::LaserScan>("scan", 50);
+
+ unsigned int num_readings = 100;
+
+ double laser_frequency = 40;
+
+ double ranges[num_readings];
+
+ double intensities[num_readings];
+
+ int count = 0;
+
+ ros::Rate r(1.0);
+
+ while(n.ok()){
+
+    //generate some fake data for our laser scan
+
+    for(unsigned int i = 0; i < num_readings; ++i){
+
+     ranges[i] = count;
+
+     intensities[i] = 100 + count;
+
+    }
+
+    ros::Time scan_time = ros::Time::now();
+
+    //populate the LaserScan message
+
+    sensor_msgs::LaserScan scan;
+
+    scan.header.stamp = scan_time;
+
+    scan.header.frame_id = "base_link";
+
+    scan.angle_min = -1.57;
+
+    scan.angle_max = 1.57;
+
+    scan.angle_increment = 3.14 / num_readings;
+
+    scan.time_increment = (1 / laser_frequency) / (num_readings);
+
+    scan.range_min = 0.0;
+
+    scan.range_max = 100.0;
+
+    scan.ranges.resize(num_readings);
+
+    scan.intensities.resize(num_readings);
+
+    for(unsigned int i = 0; i < num_readings; ++i){
+
+     scan.ranges[i] = ranges[i];
+
+     scan.intensities[i] = intensities[i];
+
+    }
+
+    scan_pub.publish(scan);
+
+    ++count;
+
+    r.sleep();
+
+ }
+}
+以scan为名创建一个新的主题，其消息格式为sensor_msgs/LaserScan。
+通过使用这个示例模板，你可以使用任何激光雷达，而无需考虑Ros中是否已经有了它的驱动，你只需要用你的激光雷达上的真实数据来代替模板中的默认数据，这个模板还能用于将其他传感器通过数据格式转换伪装成一个激光雷达。例如将双目视觉测距系统或声纳传感器模拟成一个激光雷达。
+
+发布里程数据：
+导航功能包集使用的消息类型是nav_msgs/Odometry
+rosmsg show nav_msgs/Odometry
+gazeo获得里程数据，：
+rostopic echo /odom/pose/pose
+下面是这个publish_odometry()函数,其功能是发布里程数据：
+void DiffDrivePlugin::publish_odometry()
+{
+ros::Time current_time = ros::Time::now();
+std::string odom_frame = tf::resolve(tf_pefix,"base_footprint");
+//getting data for base_footprint to odom transform
+math::Pose pose = this->parent->GetState().GetPose();
+
+btQuaternion qt(pose.rot.x,pose.rot.y,pose.rot.z,pose.rot.w);
+btVector3 vt(pose.pos.x,pose.pos.y,pose.pos.z);
+
+tf::Transform base_footprint_to_odom(qt,vt);
+transform_broadcaster_->sendTransform(tf::StampedTransform(base_footprint_to_odom,current_time,odom_frame,base_footprint_frame));
+
+//publish odom topic
+odom_.pose.pose.position.x=pose.pos.x;
+odom_.pose.pose.position.y=pose.pos.y;
+
+odom_.pose.pose.orientation.x = pose.rot.x;
+odom_.pose.pose.orientation.y = pose.rot.y;
+odom_.pose.pose.orientation.z = pose.rot.z;
+odom_.pose.pose.orientation.w = pose.rot.w;
+
+math::Vector3 linear = this->parent->GetWorldLinearVel();
+odom_.twist.twist.linear.x = linear.x;
+odom_.twist.twist.linear.y = linear.y;
+odom_.twist.twist.angular.z = this->parent->GetWorldAngularVel().z;
+odom_.header.stamp = current_time;
+odom_.header.frame_id = odom_frame;
+odom_.child_frame_id = base_footprint_frame;
+
+pub_.publish(odom_);
+}
+
+创建自定义里程数据：
+#include <string>
+#include <ros/ros.h>
+#include <sensor_msgs/JointState.h>
+#include <tf/transform_broadcaster.h>
+#include <nav_msgs/Odometry.h>
+
+
+int main(int argc, char** argv) {
+
+	ros::init(argc, argv, "state_publisher");
+	ros::NodeHandle n;
+	ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 10);
+
+	// initial position
+	double x = 0.0; 
+	double y = 0.0;
+	double th = 0;
+
+	// velocity
+	double vx = 0.4;
+	double vy = 0.0;
+	double vth = 0.4;
+
+	ros::Time current_time;
+	ros::Time last_time;
+	current_time = ros::Time::now();
+	last_time = ros::Time::now();
+
+	tf::TransformBroadcaster broadcaster;
+	ros::Rate loop_rate(20);
+
+	const double degree = M_PI/180;
+
+	// message declarations
+	geometry_msgs::TransformStamped odom_trans;
+	odom_trans.header.frame_id = "odom";
+	odom_trans.child_frame_id = "base_footprint";
+
+	while (ros::ok()) {
+		current_time = ros::Time::now(); 
+		//生成机器人的位姿信息，然后根据线速度和角速度还能够计算一段时间后机器人的理论位置
+		double dt = (current_time - last_time).toSec();
+		double delta_x = (vx * cos(th) - vy * sin(th)) * dt;
+		double delta_y = (vx * sin(th) + vy * cos(th)) * dt;
+		double delta_th = vth * dt;
+
+		x += delta_x;
+		y += delta_y;
+		th += delta_th;
+
+		geometry_msgs::Quaternion odom_quat;	
+		odom_quat = tf::createQuaternionMsgFromRollPitchYaw(0,0,th);
+
+		// update transform
+		//在这个坐标变换结构体中，我们将只给x和rotation字段赋值，因为我们的机器人前后运动和转向
+		odom_trans.header.stamp = current_time; 
+		odom_trans.transform.translation.x = x; 
+		odom_trans.transform.translation.y = y; 
+		odom_trans.transform.translation.z = 0.0;
+		odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(th);
+
+		//filling the odometry
+		nav_msgs::Odometry odom;
+		odom.header.stamp = current_time;
+		odom.header.frame_id = "odom";
+		odom.child_frame_id = "base_footprint";
+
+		// position
+		odom.pose.pose.position.x = x;
+		odom.pose.pose.position.y = y;
+		odom.pose.pose.position.z = 0.0;
+		odom.pose.pose.orientation = odom_quat;
+
+		//velocity
+		odom.twist.twist.linear.x = vx;
+		odom.twist.twist.linear.y = vy;
+		odom.twist.twist.linear.z = 0.0;
+		odom.twist.twist.angular.x = 0.0;
+		odom.twist.twist.angular.y = 0.0;
+		odom.twist.twist.angular.z = vth;
+
+		last_time = current_time;
+
+		// publishing the odometry and the new tf
+		broadcaster.sendTransform(odom_trans);
+		odom_pub.publish(odom);
+
+		loop_rate.sleep();
+	}
+	return 0;
+}
+在CMakeLists.txt文件中添加以下行，之后使用以下命令进行编译，编译完成后启动来查看模型机器人的运动
+
+创建基础控制器：
+对于导航功能包集来说，一个基础控制器是非常重要的，因为这是唯一能够有效地控制机器人的方法，它能够直接和你的机器人的电子设备通信。你必须自己编写针对你机器人平台的基础控制器。
+你的机器人是通过geometry_msgs/Twist类型的消息所控制的。这个类型正是我们之前看到的Odometry消息所使用的。
+你的基础控制器必须订阅以cmd_vel为名称的主题，必须生成正确的线速度和角速度命令来驱动机器人。
+rosmsg show geometry_msgs/Twist
+对于我们的机器人，只需要使用线速度x和角速度z,因为我们的机器人是基于差分驱动平台的，驱动它的俩个电机只能够让机器人前进，后退和转向。
+运行机器人，使用键盘操作，rqt_graph查看节点关系，在gazebo仿真环境中并不需要实现基础控制器
+参照diffdrive_plugin仿真插件（俩个驱动轮，电机，编码器）：
+base_controller.cpp
+#include <ros/ros.h>
+#include <sensor_msgs/JointState.h>
+#include <tf/transform_broadcaster.h>
+#include <nav_msgs/Odometry.h>
+#include <iostream>
+
+using namespace std;
+
+double width_robot = 0.1;
+double vl = 0.0;
+double vr = 0.0;
+ros::Time last_time;	
+double right_enc = 0.0;
+double left_enc = 0.0;
+double right_enc_old = 0.0;
+double left_enc_old = 0.0;
+double distance_left = 0.0;
+double distance_right = 0.0;
+double ticks_per_meter = 100;
+double x = 0.0;
+double y = 0.0;
+double th = 0.0;
+geometry_msgs::Quaternion odom_quat;
+
+void cmd_velCallback(const geometry_msgs::Twist &twist_aux)
+{
+	geometry_msgs::Twist twist = twist_aux;	
+	double vel_x = twist_aux.linear.x;
+	double vel_th = twist_aux.angular.z;
+	double right_vel = 0.0;
+	double left_vel = 0.0;
+
+	if(vel_x == 0){  // turning
+		right_vel = vel_th * width_robot / 2.0;
+		left_vel = (-1) * right_vel;
+	}else if(vel_th == 0){ // fordward / backward
+		left_vel = right_vel = vel_x;
+	}else{ // moving doing arcs
+		left_vel = vel_x - vel_th * width_robot / 2.0;
+		right_vel = vel_x + vel_th * width_robot / 2.0;
+	}
+	vl = left_vel;
+	vr = right_vel;	
+}
+
+
+int main(int argc, char** argv){
+	ros::init(argc, argv, "base_controller");
+	ros::NodeHandle n;
+	ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 10, cmd_velCallback);
+	ros::Rate loop_rate(10);
+
+	while(ros::ok())
+	{
+
+		double dxy = 0.0;
+		double dth = 0.0;
+		ros::Time current_time = ros::Time::now();
+		double dt;
+		double velxy = dxy / dt;
+		double velth = dth / dt;
+
+		ros::spinOnce();
+		dt =  (current_time - last_time).toSec();;
+		last_time = current_time;
+
+		// calculate odomety
+		if(right_enc == 0.0){
+			distance_left = 0.0;
+			distance_right = 0.0;
+		}else{
+			distance_left = (left_enc - left_enc_old) / ticks_per_meter;
+			distance_right = (right_enc - right_enc_old) / ticks_per_meter;
+		} 
+
+		left_enc_old = left_enc;
+		right_enc_old = right_enc;
+
+		dxy = (distance_left + distance_right) / 2.0;
+		dth = (distance_right - distance_left) / width_robot;
+
+		if(dxy != 0){
+			x += dxy * cosf(dth);
+			y += dxy * sinf(dth);
+		}	
+
+		if(dth != 0){
+			th += dth;
+		}
+		odom_quat = tf::createQuaternionMsgFromRollPitchYaw(0,0,th);
+		loop_rate.sleep();
+	}
+}
+
+使用ros创建地图gazebo_mapping_robot.launch
+<?xml version="1.0"?>
+<launch>
+  <!-- this launch file corresponds to robot model in ros-pkg/robot_descriptions/pr2/erratic_defs/robots for full erratic -->
+
+  <param name="/use_sim_time" value="true" />
+
+  <!-- start up wg world -->
+  <include file="$(find gazebo_worlds)/launch/wg_collada_world.launch"/>
+
+  <arg name="model" />
+  <param name="robot_description" command="$(find xacro)/xacro.py $(arg model)" />
+
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" ></node>
+  <!-- start robot state publisher -->
+  <node pkg="robot_state_publisher" type="state_publisher" name="robot_state_publisher" output="screen" >
+    <param name="publish_frequency" type="double" value="50.0" />
+  </node>
+
+
+  <node name="spawn_robot" pkg="gazebo" type="spawn_model" args="-urdf -param robot_description -z 0.1 -model robot_model" respawn="false" output="screen" />
+
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find chapter7_tutorials)/launch/mapping.vcg"/>
+  <node name="slam_gmapping" pkg="gmapping" type="slam_gmapping">
+    <remap from="scan" to="base_scan/scan"/>
+  </node>
+	
+
+</launch>
+
+rosrun map_server map_saver -f map --->保存地图
+rosrun map_server map_server map.yaml  ---->加载地图
+
+创建机器人配置
+启动文件：
+<launch>
+    <arg name="paused" default="false"/>
+    <arg name="use_sim_time" default="true"/>
+    <arg name="gui" default="true"/>
+    <arg name="headless" default="false"/>
+    <arg name="debug" default="false"/>
+	<include file="$(find gazebo_ros)/launch/willowgarage_world.launch">
+        <!--include file="$(find gazebo_ros)/launch/empty_world.launch"-->
+    	</include>
+
+	<param name="robot_description" command="$(find xacro)/xacro --inorder '$(find shcrobot_description)/urdf/xacro/shcRobot2_xacro_camera_gazebo.xacro'"/>
+	<node name = "robot_state_publisher" pkg = "robot_state_publisher" type = "robot_state_publisher">
+		<param name="publish_frequency" type="double" value="20.0" />
+	</node>
+    <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+          args="-urdf -model shcrobot -param robot_description"/> 
+	<node name = "rviz" pkg = "rviz" type = "rviz" args = "-d $(find shcrobot_description)/launch/navigation.rviz"/>
+	<node name = "joint_state_publisher" pkg = "joint_state_publisher" type = "joint_state_publisher"/>
+	<node name="slam_gmapping" pkg="gmapping" type="slam_gmapping"/>
+	<!--remap from="scan" to="base_scan/scan"/-->
+	<remap from="/base_scan/scan" to="/scan" />
+</launch>
+
+配置全局和局部代价地图：
+全局导航用于建立到地图上最终目标或一个远距离的路径
+局部导航用于建立到近距离目标或者为了临时躲避障碍物的路径。
+导航算法通过使用代价地图来处理地图中的各种信息。
+代价地图的参数用于配置算法计算形为。这些参数保存在共享的文件中：
+三个最基本的配置文件
+costmap_common_params.yaml
+global_costmap_params.yaml
+local_costmap_params.yaml
+在launch文件夹下：
+基本参数的配置
+costmap_common_params.yaml：
+obstacle_range: 10
+raytrace_range: 3.0
+footprint: [[-0.2,-0.2],[-0.2,0.2], [0.2, 0.2], [0.2,-0.2]]
+#robot_radius: ir_of_robot
+inflation_radius: 0.55
+
+observation_sources: laser_scan_sensor
+#对传感器的坐标系和数据进行配置：
+laser_scan_sensor: {sensor_frame: laser_base_link, data_type: LaserScan, topic: /scan, marking: true, clearing: true}
+
+#obstacle_range和raytrace_range参数用于表示传感器的最大探测距离并在代价地图中引入探测的障碍信息。前者设定检测障碍物距离纳入地图，后者在机器人运动过程中，实时清除代价地图中的障碍物，并更新可移动的自由空间数据。参数footprint用于将机器人的几何参数告知导航功能包集，inflation_radius则给定了机器人与障碍物之间必须要保持的最小距离,observation_sources参数来设定导航功能包集所使用的传感器。
+
+全局代价地图的配置：
+global_costmap_params.yaml:
+global_costmap:
+  #定义机器人和地图之间的坐标变换，建立全局代价地图必须要使用这个变换。
+  global_frame: map
+  robot_base_frame: base_link
+  #更新频率
+  update_frequency: 5.0
+  #是否使用一个地图或者地图服务器来初始化全局代价地图。
+  static_map: true
+
+局部代价地图的配置：
+local_costmap_params.yaml:
+local_costmap:
+  global_frame: odom
+  robot_base_frame: base_link
+  update_frequency: 5.0
+  #发布信息的频率
+  publish_frequency: 2.0
+  static_map: false
+  #配置在机器人运动过程中，代价地图始终以机器人为中心
+  rolling_window: true
+  #配置代价地图的尺寸和分辨率，以米为单位
+  width: 5.0
+  height: 5.0
+  resolution: 0.1
+
+基本局部规划器配置----->产生一个速度命令来移动我们的机器人：
+base_local_planner_params.yaml:
+TrajectoryPlannerROS:
+  #最大最小速度限值，加速限值
+  max_vel_x: 1
+  min_vel_x: 0.8
+  max_rotational_vel: 0.5
+  min_in_place_rotational_vel: 0.2
+
+  acc_lim_th: 3.2
+  acc_lim_x: 2.5
+  acc_lim_y: 2.5
+  #如果是全向机器人此参数为true
+  holonomic_robot: false
+
+为导航功能包创建启动文件move_base.launch：
+<launch>
+
+  <!-- Run the map server -->
+   <!--node name="map_server" pkg="map_server" type="map_server" args="$(find chapter8_tutorials)/maps/map.yaml" output="screen"/-->
+
+  <include file="$(find amcl)/examples/amcl_diff.launch" >
+  </include> 
+
+  <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <param name="controller_frequency" value="3.0"/> 
+    <param name="controller_patiente" value="4.0"/>
+    <rosparam file="$(find shcrobot_description)/launch/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="$(find shcrobot_description)/launch/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <rosparam file="$(find shcrobot_description)/launch/local_costmap_params.yaml" command="load" />
+    <rosparam file="$(find shcrobot_description)/launch/global_costmap_params.yaml" command="load" />
+    <rosparam file="$(find shcrobot_description)/launch/base_local_planner_params.yaml" command="load" />
+  </node>
+
+
+</launch>
+
+使用了专门支持差分驱动机器人平台的amcl节点，如果你希望使用它驱动一个全向移动机器人，那么你就需要使用amcl_omni.launch文件。
+启动机器人，然后启动move_base.launch文件。
+
+为导航功能包集设置rviz:
+点击2D Pose Estimate按钮，并点击地图来指定机器人的初始位姿。
+Topic:initialpose
+Type:geometry_msgs/PoseWithCovarianceStamped
+
+点击2D Nav Goal按钮并在地图上选择机器人的运动目标，你能够选择x轴和y轴坐标，以及机器人最后的方向。
+Topic:move_base_simple/goal
+Type:geometry_msgs/PoseStamped
+
+静态地图:添加Map:
+Topic:map
+Type:nav_msgs/GetMap
+
+点云添加PoseArray:
+Topic:particlecloud
+Type:geometry_msgs/PoseArray
+
+机器人立足点添加Polygon
+Topic:/move_base/local_costmap/footprint
+Type:geometry_msgs/Polyon
+
+障碍添加GridCells:
+Topic:local_costmap/obstacles
+Type:nav_msgs/GridCells
+
+膨胀添加Gridcells:
+Topic:local_costmap/inflated_obstacles
+Type:nav_msgs/GridCells
+
+全局规划添加Path:
+Topic:/move_base/TrajectoryPlannerROS/global_plan
+Type:nav_msgs/Path
+
+局部规划添加Path:
+Topic:/move_base/TrajectoryPlannerROS/local_plan
+Type:nav_msgs/Path
+
+规划器规划添加Path:
+Topic:NavfnROS/plan
+Type:nav_msgs/Path
+
+当前目标添加Pose:
+Topic:/move_base/current_goal
+Type:geometry_msgs/PoseStamped
+
+
+向移动机器人发送目标的一个示例：
+#include <ros/ros.h>
+#include <move_base_msgs/MoveBaseAction.h>
+#include <actionlib/client/simple_action_client.h>
+#include <tf/transform_broadcaster.h>
+#include <sstream>
+
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+int main(int argc, char** argv){
+	ros::init(argc, argv, "navigation_goals");
+
+	MoveBaseClient ac("move_base", true);
+
+	while(!ac.waitForServer(ros::Duration(5.0))){
+		ROS_INFO("Waiting for the move_base action server");
+	}
+
+	move_base_msgs::MoveBaseGoal goal;
+
+	goal.target_pose.header.frame_id = "map";
+	goal.target_pose.header.stamp = ros::Time::now();
+
+	goal.target_pose.pose.position.x = 1.0;
+	goal.target_pose.pose.position.y = 1.0;
+	goal.target_pose.pose.orientation.w = 1.0;
+
+	ROS_INFO("Sending goal");
+	ac.sendGoal(goal);
+
+	ac.waitForResult();
+
+	if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED)
+		ROS_INFO("You have arrived to the goal position");
+	else{
+		ROS_INFO("The base failed for some reason");
+	}
+	return 0;
+}
+actionlib通过消息（不是服务）和主题实现具体功能。这样我们可以通过主题来发送目标，并在需要的时候获取反馈或执行结果。这样就可以编写任务程序，引导机器人运送物品或者查看其他房间的情况。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

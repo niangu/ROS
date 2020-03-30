@@ -1,0 +1,426 @@
+在chapter_tutorials/urdf文件夹下创建一个新文件并命名为robot1.urdf:
+<?xml version="1.0"?>
+<robot name="Robot1">
+	<link name="base_link">  
+   		<visual>            <!--定义在仿真环境可见-->
+     			<geometry>       <!--能够定义几何形状（圆柱体，立方体，球体和网格），材质(颜色，纹理)和原点-->
+       				<box size="0.2 .3 .1"/>
+     			</geometry>
+			<origin rpy="0 0 0" xyz="0 0 0.05"/>
+			<material name="white">
+				<color rgba="1 1 1 1"/>
+			</material>
+   		</visual>	
+ 	</link>
+
+ 	<link name="wheel_1">
+   		<visual>
+     			<geometry>
+       				<cylinder length="0.05" radius="0.05"/>
+     			</geometry>
+			<origin rpy="0 1.5 0" xyz="0.1 0.1 0"/>
+   			<material name="black">
+				<color rgba="0 0 0 1"/>
+			</material>
+		</visual>
+ 	</link>
+
+ 	<link name="wheel_2">
+   		<visual>
+     			<geometry>
+       				<cylinder length="0.05" radius="0.05"/>
+     			</geometry>
+			<origin rpy="0 1.5 0" xyz="-0.1 0.1 0"/>
+   			<material name="black"/>
+   		</visual>
+ 	</link>
+    
+ 	<link name="wheel_3">
+   		<visual>
+     			<geometry>
+       				<cylinder length="0.05" radius="0.05"/>
+     			</geometry>
+			<origin rpy="0 1.5 0" xyz="0.1 -0.1 0"/>
+   			<material name="black"/>
+   		</visual>
+ 	</link>
+
+ 	<link name="wheel_4">
+   		<visual>
+     			<geometry>
+       				<cylinder length="0.05" radius="0.05"/>
+     			</geometry>
+			<origin rpy="0 1.5 0" xyz="-0.1 -0.1 0"/>
+   			<material name="black"/>
+   		</visual>
+ 	</link>
+
+ 	<joint name="base_to_wheel1" type="fixed">   <!--定义关节类型(固定关节fixed,转动关节revolute,旋转关节continuous,6自由度浮动关节floating或平面运动关节planar),父连接坐标系和子连接坐标系(关节相连的前后坐标系)，在本例中wheel_1是base_link的子连接坐标系-->
+   		<parent link="base_link"/>
+   		<child link="wheel_1"/>
+   		<origin xyz="0 0 0"/>
+ 	</joint>
+
+ 	<joint name="base_to_wheel2" type="fixed">
+   		<parent link="base_link"/>
+   		<child link="wheel_2"/>
+   		<origin xyz="0 0 0"/>
+ 	</joint>
+
+ 	<joint name="base_to_wheel3" type="fixed">
+   		<parent link="base_link"/>
+   		<child link="wheel_3"/>
+   		<origin xyz="0 0 0"/>
+ 	</joint>
+
+ 	<joint name="base_to_wheel4" type="fixed">
+   		<parent link="base_link"/>
+   		<child link="wheel_4"/>
+   		<origin xyz="0 0 0"/>
+ 	</joint>
+</robot>
+
+检查语法：
+sudo apt-get install liburdfdom-tools
+check_urdf robot1.urdf
+图形化显示：
+urdf_to_graphiz robot1.urdf
+evince origins.pdf
+
+使用rviz使用它并查看它的3D展示：
+在chapter_tutorials/launch文件夹下创建display.launch：
+<launch>
+        <arg name="model" />
+        <arg name="gui" default="False" />
+        <param name="robot_description" textfile="$(arg model)" />
+        <param name="use_gui" value="$(arg gui)" />
+        <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"></node>
+        <node name="root_state_publisher" pkg="robot_state_publisher" type="state_publisher" />
+        <node name="rviz" pkg="rviz" type="rviz" args="-d $(find urdf_tutorial)/urdf.vcg" />
+</launch>
+然后：roslaunch chapter_tutorials display.launch model:="`rospack find chapter_tutorials`/urdf/robot1.urdf"
+默认状态下画面中什么都没有，此时需要做出调整。在左下角的add按钮中添加RobotModel，然后将Fixed Frame选为base_link
+
+有时候为了使自己构建的模型更加真实，需要加载我们自行创建的图形(mesh)或者是使用其他机器人模型的图形，使用PR2机器人的夹持器例子，网址无效：
+<?xml version="1.0"?>
+<robot name="robot1">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh scale="0.025 0.025 0.025" filename="package://chapter5_tutorials/urdf/bot.dae"/>
+      </geometry>
+      <origin xyz="0 0 0.226"/>
+    </visual>
+  </link>
+</robot>
+
+使机器人模型运动：
+最常用的关节是转动关节：
+<joint name="arm_1_to_arm_base" type="revolute">
+	<parent link="arm_base"/>
+	<child link="arm_1"/>
+	<axis xyz="1 0 0"/>          <!--选择其转动轴-->
+	<origin xyz="0 0 0.15"/>
+<limit effort="1000.0" lower="-1.0" upper="1.0" velocity="0.5"/> <!--转动角限值-->
+</joint>
+
+
+joint_state_publisher_gui是刚更新出来的包，需要把之前的joint_state_publisher换成joint_state_publisher_gui
+
+         sudo apt-get install ros-melodic-joint-state-publisher-gui   
+
+         如果是kinetic版本的
+
+　　sudo apt-get install ros-kinetic-joint-state-publisher-gui
+//物理和碰撞属性
+<link name="wheel_1">
+	<collision>
+		<geometry>
+			<cylinder length="0.05" radius="0.05"/>
+		</geometry>
+	</collision>
+	<inertial>
+		<mass value="10"/>
+		<inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
+	</inertial>
+</link>
+记住要为所有连接添加碰撞collision和惯性inertial的属性，只有这样做了，Gazebo将会无法使用这些模型
+
+xacro---->一个写机器人模型的更好方法
+为了开始使用xacro,我们需要指定一个命名空间，以便文件能够被正确的解析：
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="robot1_xacro">
+使用常量--->xacro
+<xacro:property name="length_wheel" value="0.05" />
+<xacro:property name="radius_wheel" value="0.05" />
+只需要使用${name_of_variable}来引用刚才想要修改的这些值：
+<cylinder length="${length_wheel}" radius="${radius_wheel}"/>
+可以在${}结构中使用基本的四则运算(+,-,*,/,一元减好和括号)但是不包括求幂和求模运算
+<cylinder radius="${wheeldiam/2}" length=".1"/>
+<origin xyz="${reflect*(width+0.2)} 0.25" />
+
+使用宏来做inertial初始化：
+<xacro:macro name="default_inertial" params="mass">
+	<inertial>
+		<mass value="${mass}" />
+		<inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0" />
+	</inertial>
+</xacro:macro>
+<xacro:default_inertial mass="100" />
+
+为了在rviz和Gazebo中使用xacro文件，你需要将它转换成.urdf文件
+rosrun xacro xacro.py robot1.xacro >robot1_processed.urdf
+rosrun xacro xacro.py "`rospack find chapter_tutorials`/urdf/robot1.xacro" > "`rospack find chapter_tutorials`/urdf/robot1_processed.urdf"
+
+使用代码移动机器人：在chapter_tutorials/src文件夹下state_publisher.cpp:
+#include <string>
+#include <ros/ros.h>
+#include <sensor_msgs/JointState.h>
+#include <tf/transform_broadcaster.h>
+
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "state_publisher");
+    ros::NodeHandle n;
+    ros::Publisher joint_pub = n.advertise<sensor_msgs::JointState>("joint_states", 1);
+    tf::TransformBroadcaster broadcaster;
+    ros::Rate loop_rate(30);
+
+    const double degree = M_PI/180;
+
+    // robot state
+    double inc= 0.005, base_arm_inc= 0.005, arm1_armbase_inc= 0.005, arm2_arm1_inc= 0.005, gripper_inc= 0.005, tip_inc= 0.005;
+    double angle= 0 ,base_arm = 0, arm1_armbase = 0, arm2_arm1 = 0, gripper = 0, tip = 0;
+    // message declarations
+    geometry_msgs::TransformStamped odom_trans;
+    sensor_msgs::JointState joint_state;
+    odom_trans.header.frame_id = "odom";
+    odom_trans.child_frame_id = "base_link";
+
+    while (ros::ok()) {
+        //update joint_state
+        joint_state.header.stamp = ros::Time::now();
+        joint_state.name.resize(11);
+        joint_state.position.resize(11);
+        joint_state.name[0] ="base_to_arm_base";
+        joint_state.position[0] = base_arm;
+        joint_state.name[1] ="arm_1_to_arm_base";
+        joint_state.position[1] = arm1_armbase;
+        joint_state.name[2] ="arm_2_to_arm_1";
+        joint_state.position[2] = arm2_arm1;
+	joint_state.name[3] ="left_gripper_joint";
+        joint_state.position[3] = gripper;
+	joint_state.name[4] ="left_tip_joint";
+        joint_state.position[4] = tip;
+	joint_state.name[5] ="right_gripper_joint";
+        joint_state.position[5] = gripper;
+	joint_state.name[6] ="right_tip_joint";
+        joint_state.position[6] = tip;
+	joint_state.name[7] ="base_to_wheel1";
+        joint_state.position[7] = 0;
+	joint_state.name[8] ="base_to_wheel2";
+        joint_state.position[8] = 0;
+	joint_state.name[9] ="base_to_wheel3";
+        joint_state.position[9] = 0;
+	joint_state.name[10] ="base_to_wheel4";
+        joint_state.position[10] = 0;
+
+
+
+
+
+
+        // update transform
+        // (moving in a circle with radius)
+        odom_trans.header.stamp = ros::Time::now();
+        odom_trans.transform.translation.x = cos(angle);
+        odom_trans.transform.translation.y = sin(angle);
+        odom_trans.transform.translation.z = 0.0;
+        odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(angle);
+
+        //send the joint state and transform
+        joint_pub.publish(joint_state);
+        broadcaster.sendTransform(odom_trans);
+
+
+	// Create new robot state
+        arm2_arm1 += arm2_arm1_inc;
+        if (arm2_arm1<-1.5 || arm2_arm1>1.5) arm2_arm1_inc *= -1;
+		  arm1_armbase += arm1_armbase_inc;
+        if (arm1_armbase>1.2 || arm1_armbase<-1.0) arm1_armbase_inc *= -1;
+        base_arm += base_arm_inc;
+        if (base_arm>1. || base_arm<-1.0) base_arm_inc *= -1;
+        gripper += gripper_inc;
+        if (gripper<0 || gripper>1) gripper_inc *= -1;
+		
+		  angle += degree/4;
+
+        // This will adjust as needed per iteration
+        loop_rate.sleep();
+    }
+
+
+    return 0;
+}
+
+
+<launch>
+	<arg name="model" />
+	<arg name="gui" default="False" />
+	<param name="robot_description" command="$(find xacro)/xacro.py $(arg model)" />
+	<param name="use_gui" value="$(arg gui)"/>
+	<node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" ></node>
+	<node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher" />
+	<node name="rviz" pkg="rviz" type="rviz" args="-d $(find urdf_tutorial)/urdf.vcg" />
+</launch>
+
+想要在ROS中仿真，需要使用Gazebo.
+robot1_base_01.xacro:这是机器人base_link的新代码：
+<link name="base_link">
+	<visual>
+		<geometry>
+			<box size="0.2 .3 .1"/>
+		</geometry>
+		<origin rpy="0 0 1.54" xyz="0 0 0.25"/>
+		<material name="white">
+			<color rgba="1 1 1 1"/>	
+		</material>
+	</visual>
+	<collision>
+		<geometry>
+			<box size="0.2 .3 0.1"/>
+		</geometry>
+	</collision>
+	<xacro:default_inertial mass="10"/>
+</link>
+collision和inertial在Gazebo中运行模型是必须的，这样才能计算机器人的物理响应。
+在chapter_tutorials/launch文件夹下gazebo.launch:
+<?xml version="1.0"?>
+<launch>
+  <!-- this launch file corresponds to robot model in ros-pkg/robot_descriptions/pr2/erratic_defs/robots for full erratic -->
+
+  <param name="/use_sim_time" value="true" />
+
+  <!-- start up wg world -->
+  <include file="$(find gazebo_worlds)/launch/empty_world.launch"/>
+
+  <arg name="model" />
+  <param name="robot_description" command="$(find xacro)/xacro.py $(arg model)" />
+
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" ></node> 
+  <!-- start robot state publisher -->
+  <node pkg="robot_state_publisher" type="state_publisher" name="robot_state_publisher" output="screen" >
+    <param name="publish_frequency" type="double" value="50.0" />
+  </node>
+
+  <node name="spawn_robot" pkg="gazebo" type="spawn_model" args="-urdf -param robot_description -z 0.1 -model robot_model" respawn="false" output="screen" />
+
+roslaunch chapter_tutorials gazebo.launch model:="`rospack find chapter_tutorials`/urdf/robot1_base_01.xacro"
+
+添加纹理：
+<gazebo reference="base_link">
+        <material>Erratic/BlueBrushedAluminum</material>
+ </gazebo>
+ 
+ <gazebo reference="wheel_1">
+        <material>Erratic/Black</material>
+ </gazebo>
+
+ <gazebo reference="wheel_2">
+        <material>Erratic/Black</material>
+ </gazebo>
+
+ <gazebo reference="wheel_3">
+        <material>Erratic/Black</material>
+ </gazebo>
+
+ <gazebo reference="wheel_4">
+        <material>Erratic/Black</material>
+ </gazebo>
+
+
+在erratic_description功能包中调用激光雷达，在.xacro文件中增加：
+<include filename="$(find erratic_description)/urdf/erratic_hokuyo_laser.xacro" />
+
+        <!-- BASE LASER ATTACHMENT -->
+        <erratic_hokuyo_laser parent="base_link">
+                <origin xyz="0.18 0 0.11" rpy="0 0 0" />
+        </erratic_hokuyo_laser>
+
+这个激光雷达会像真实雷达一样产生“真实”的传感器数据，能够通过rostopic echo /base_scan/scan看到这些数据
+在Gazebo中加载和使用地图：
+ roslaunch gazebo_ros willowgarage_world.launch
+在chapter_tutorials文件夹下创建一个名为gazebo_map_robot.launch的文件：
+<?xml version="1.0"?>
+<launch>
+  <!-- this launch file corresponds to robot model in ros-pkg/robot_descriptions/pr2/erratic_defs/robots for full erratic -->
+
+  <param name="/use_sim_time" value="true" />
+
+  <!-- start up wg world -->
+  <include file="$(find gazebo_ros)/launch/willowgarage_world.launch"/>
+
+  <arg name="model" />
+  <param name="robot_description" command="$(find xacro)/xacro.py $(arg model)" />
+
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" ></node>
+  <!-- start robot state publisher -->
+  <node pkg="robot_state_publisher" type="state_publisher" name="robot_state_publisher" output="screen" >
+    <param name="publish_frequency" type="double" value="50.0" />
+  </node>
+
+  <node name="spawn_robot" pkg="gazebo_ros" type="spawn_model" args="-urdf -param robot_description -z 0.1 -model robot_model" respawn="false" output="screen" />
+
+
+</launch>
+
+roslaunch chapter_tutorials gazebo_map_robot.launch model:="`rospack find chapter_tutorials`/urdf/robot1_base_02.xacro"
+
+在Gazebo中移动机器人：
+使用erratic_robot功能包集中的差分不定式机器人驱动(控制器)来移动机器人模型
+安装功能包集
+sudo apt-get install ros-fuerte-erratic-robot
+sudo apt-get install ros-melodic-gazebo-ros-pkgs ros-melodic-ros-control
+将以下代码添加到模型文件中去
+<gazebo>
+
+ <controller:diffdrive_plugin name="differential_drive_controller" plugin="libdiffdrive_plugin.so">
+        <alwaysOn>true</alwaysOn>
+        <update>100</update>
+        <updateRate>100.0</updateRate>
+        <leftJoint>base_to_wheel4</leftJoint>
+        <rightJoint>base_to_wheel1</rightJoint>
+        <wheelSeparation>0.33</wheelSeparation>
+        <wheelDiameter>0.1</wheelDiameter>
+        <torque>5</torque>
+        <interface:position name="position_iface_0"/>
+ 	<topicName>cmd_vel</topicName>
+ </controller:diffdrive_plugin>
+
+</gazebo>
+
+
+<link name="base_footprint">
+   		<visual>
+			<geometry>
+      				<box size="0.001 0.001 0.001"/>
+     			</geometry>
+			<origin rpy="0 0 0" xyz="0 0 0"/>
+   		</visual>
+		<xacro:default_inertial mass="0.0001"/>
+ 	</link>
+
+	<gazebo reference="base_footprint">
+		<material>Gazebo/Green</material>
+		<turnGravityOff>false</turnGravityOff>
+	</gazebo>
+
+	<joint name="base_footprint_joint" type="fixed">
+		<origin xyz="0 0 0" />
+		<parent link="base_footprint" />
+		<child link="base_link" />
+	</joint>
+
+roslaunch chapter_tutorials gazebo_map_robot.launch model:="`rospack find chapter_tutorials`/urdf/robot1_base_04.xacro"
+使用节点来移动机器人：
+rosrun erratic_teleop erratic_keyboard_teleop        ->使用w/A/S/D按键来移动机器人
+
