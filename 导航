@@ -1,3 +1,8 @@
+添加小车键盘驱动：
+https://github.com/arebgun/erratic_robot.git
+找到里面erratic_teleop/src/keyboard.cpp
+放到自己项目src下，添加相关到CMakelist.txt,然后运行便可
+
 sudo apt-get install ros-melodic-slam-gmapping
 sudo apt-get install libsdl1.2-dev
 
