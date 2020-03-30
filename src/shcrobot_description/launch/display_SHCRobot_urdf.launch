@@ -1,0 +1,13 @@
+<launch>
+	<param name = "robot_description" textfile = "$(find shcrobot_description)/urdf/SHCRobot_description.urdf"/>
+	<!--parameter是ROS系统运行中的参数，存储在参数服务器中。在launch文件中可以通过<param>元素加载parameter。launch文件执行后，parameter就加载到ROS的参数服务器上了。-->
+	<param name = "use_gui" value = "true"/>	
+	<!--调用GUI参数，显示关节控制插件-->
+	<node name = "joint_state_publisher" pkg = "joint_state_publisher" type = "joint_state_publisher"/>
+	<!--运行joint_state_publisher节点，发布机器人关节状态-->
+	<node name = "robot_state_publisher" pkg = "robot_state_publisher" type = "robot_state_publisher"/>
+	<!--运行robot_state_publisher节点，发布tf-->
+	<node name = "rviz" pkg = "rviz" type = "rviz" args = "-d $(find shcrobot_description)/config/shcrobot_urdf.rviz" required = "true"/>
+	<!--rviz可视化界面-->
+</launch>
+

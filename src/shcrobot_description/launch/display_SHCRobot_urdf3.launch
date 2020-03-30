@@ -1,0 +1,22 @@
+<launch>
+    <arg name="paused" default="false"/>
+    <arg name="use_sim_time" default="true"/>
+    <arg name="gui" default="true"/>
+    <arg name="headless" default="false"/>
+    <arg name="debug" default="false"/>
+	<include file="$(find gazebo_ros)/launch/willowgarage_world.launch">
+        <!--include file="$(find gazebo_ros)/launch/empty_world.launch"-->
+    	</include>
+
+	<param name="robot_description" command="$(find xacro)/xacro --inorder '$(find shcrobot_description)/urdf/xacro/shcRobot2_xacro_camera_gazebo.xacro'"/>
+	<node name = "robot_state_publisher" pkg = "robot_state_publisher" type = "robot_state_publisher">
+		<param name="publish_frequency" type="double" value="20.0" />
+	</node>
+    <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+          args="-urdf -model shcrobot -param robot_description"/> 
+	<node name = "rviz" pkg = "rviz" type = "rviz" args = "-d $(find shcrobot_description)/launch/navigation.rviz"/>
+	<node name = "joint_state_publisher" pkg = "joint_state_publisher" type = "joint_state_publisher"/>
+	<node name="slam_gmapping" pkg="gmapping" type="slam_gmapping"/>
+	<!--remap from="scan" to="base_scan/scan"/-->
+	<remap from="/base_scan/scan" to="/scan" />
+</launch>
