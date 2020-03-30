@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="arm" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:include filename="$(find shcrobot_description)/urdf/xacro/shcRobot2_base_xacro.xacro"/>
+    <xacro:include filename="$(find shcrobot_description)/urdf/xacro/camera_gazebo.xacro"/>
+    <xacro:include filename="$(find shcrobot_description)/urdf/xacro/lidar_gazebo.xacro"/>
+	
+    <xacro:property name="lidar_offset_x" value="0" />
+    <xacro:property name="lidar_offset_y" value="0" />
+    <xacro:property name="lidar_offset_z" value="0.4" />
+
+    <robot_base/>
+
+    <!-- lidar -->
+    <joint name="lidar_joint" type="fixed">
+        <origin xyz="${lidar_offset_x} ${lidar_offset_y} ${lidar_offset_z}" rpy="0 0 0" />
+        <parent link="base_link"/>
+        <child link="laser_link"/>
+    </joint>
+    <xacro:rplidar prefix="laser"/>
+
+
+</robot>
+
