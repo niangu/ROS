@@ -1,3 +1,32 @@
+sudo apt-get install ros-melodic-slam-gmapping
+sudo apt-get install libsdl1.2-dev
+
+sudo apt install libsdl-image1.2-dev
+Ubuntu18.04 环境下 ROS melodic 版 中很多包没有提供sudo apt install的安装方式，需要通过源代码安装，安装方法如下：
+
+1、安装libsdl1.2-dev 、 libsdl-image1.2-dev 否则会报  “Could NOT find SDL (missing: SDL_LIBRARY SDL_INCLUDE_DIR)”等的错。
+
+sudo apt-get install libsdl1.2-dev
+
+sudo apt install libsdl-image1.2-dev
+
+2、进入工作空间，git clone以下源代码编译安装：
+
+cd ~/catkin_ws1/src/
+
+git clone https://github.com/ros-perception/openslam_gmapping
+
+git clone https://github.com/ros-perception/slam_gmapping.git
+
+git clone https://github.com/ros-planning/navigation.git
+
+git clone https://github.com/ros/geometry2.git
+
+git clone https://github.com/ros-planning/navigation_msgs.git
+
+cd ~/catkin_ws1&& catkin_make
+
+
 导航需要的三个包：
 move_base:根据参照的消息进行路径规划，使移动机器人到达指定的位置
 gmapping:根据激光数据（或者深度数据模拟的激光数据）建立地图；
