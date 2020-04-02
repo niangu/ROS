@@ -1,0 +1,238 @@
+ROS探索总结（四十）——dynamic reconfigure
+12606 10 2017年11月29日 19时00分
+古月
+古月
+
+ROS中的参数服务器无法在线动态更新，也就是说如果Listener不主动查询参数值，就无法获知Talker是否已经修改了参数。这就对ROS参数服务器的使用造成了很大的局限，很多场景下我们还是需要动态更新参数的机制，例如参数调试、功能切换等，所以ROS提供了另外一个非常有用的功能包——dynamic_reconfigure，实现这种动态配置参数的机制。
+
+
+例如下图是启动Kinect后openni功能包所提供的可动态配置参数的可视化列表：
+
+
+
+1
+
+
+
+
+
+
+
+ROS中的动态参数修改采用C/S架构，在运行过程中，用户在客户端修改参数后不需要重新启动，而是向服务端发送请求，然后服务端通过回调函数确认，即完成参数的动态重配置。本篇我们就来探索ROS中参数动态配置的具体实现方法。
+
+
+
+
+一、 创建配置文件
+
+
+
+首先通过以下命令创建一个功能包——dynamic_tutorials：
+
+$ catkin_create_pkg dynamic_tutorials rospy roscpp dynamic_reconfigure
+
+实现动态参数配置需要编写一个配置文件，在功能包中创建一个放置配置文件的cfg文件夹，然后在其中创建一个配置文件Tutorials.cfg：
+
+#!/usr/bin/env python
+PACKAGE = "dynamic_tutorials"
+
+from dynamic_reconfigure.parameter_generator_catkin import *
+
+gen = ParameterGenerator()
+
+gen.add("int_param",    int_t,    0, "An Integer parameter", 50,  0, 100)
+gen.add("double_param", double_t, 0, "A double parameter",    .5, 0,   1)
+gen.add("str_param",    str_t,    0, "A string parameter",  "Hello World")
+gen.add("bool_param",   bool_t,   0, "A Boolean parameter",  True)
+
+size_enum = gen.enum([ gen.const("Small",      int_t, 0, "A small constant"),
+                      gen.const("Medium",     int_t, 1, "A medium constant"),
+                      gen.const("Large",      int_t, 2, "A large constant"),
+                      gen.const("ExtraLarge", int_t, 3, "An extra large constant")], "An enum to set size")
+
+gen.add("size", int_t, 0, "A size parameter which is edited via an enum", 1, 0, 3, edit_method=size_enum)
+
+exit(gen.generate(PACKAGE, "dynamic_tutorials", "Tutorials"))
+
+配置文件使用python实现，详细分析一下其中的具体内容：
+
+#!/usr/bin/env python
+PACKAGE = "dynamic_tutorials"
+
+from dynamic_reconfigure.parameter_generator_catkin import *
+
+首先需要导入dynamic_reconfigure功能包提供的参数生成器（parameter generator）。
+
+gen = ParameterGenerator()
+
+然后创建一个参数生成器，接下来就可以开始定义需要动态配置的参数了。
+
+gen.add("int_param", int_t, 0, "An Integer parameter", 50, 0, 100)
+gen.add("double_param", double_t, 0, "A double parameter", .5, 0, 1)
+gen.add("str_param", str_t, 0, "A string parameter", "Hello World")
+gen.add("bool_param",bool_t,0, "A Boolean parameter",  True)
+
+这里定义了四个不同类型的参数，生成参数可以使用参数生成器的add(name,
+type, level,
+description, default, min,
+max)方法实现，方法传入参数的意义如下：
+
+
+name：参数名，使用字符串描述；
+
+type：定义参数的类型，可以是int_t, double_t, str_t, 或者bool_t；
+
+level：需要传入参数动态配置回调函数中的掩码，在回调函数中会修改所有参数的掩码，表示参数已经进行修改；
+
+description：描述参数作用的字符串；
+
+default：设置参数的默认值；
+
+min：可选，设置参数的最小值，对于字符串和布尔类型值不生效；
+
+max：可选，设置参数的最大值，对于字符串和布尔类型值不生效；
+
+
+这种方法可以生成一个参数值，也可以使用如下方法生成一个枚举类型的值：
+
+size_enum = gen.enum([gen.const("Small",int_t,0,"A small constant"),
+          gen.const("Medium",int_t,1,"A medium constant"),
+          gen.const("Large",int_t, 2, "A large constant"),
+          gen.const("ExtraLarge",int_t,3,"An extra large constant")],
+                     "An enum to set size")
+
+gen.add("size", int_t, 0, "A size parameter which is edited via an enum", 1, 0, 3, edit_method=size_enum)
+
+这里定义了一个int_t类型得到参数“size”，该参数的值可以通过一个枚举列出来。枚举的定义使用enum方法进行定义，其中使用const方法定义每一个枚举值的名称、类型、值、描述字符串。
+
+exit(gen.generate(PACKAGE, "dynamic_tutorials", "Tutorials"))
+
+最后一行代码用于生成所有C++和Python相关的文件并且退出程序，这里第二个参数表示动态参数运行的节点名，第三个参数是生成文件所使用的前缀，需要和配置文件名相同。
+
+
+配置文件创建完成后，需要使用如下命令为配置文件添加可执行权限：
+
+$ chmod a+x cfg/Tutorials.cfg
+
+类似于消息的定义，这里也需要生成代码文件，所以在CMakeLists.txt中添加如下编译规则：
+
+#add dynamic reconfigure api
+generate_dynamic_reconfigure_options(
+  cfg/Tutorials.cfg
+  #...
+)
+
+# make sure configure headers are built before any node using them
+add_dependencies(dynamic_reconfigure_node ${PROJECT_NAME}_gencfg)
+
+配置文件相关的工作就到此为止，接下来需要创建一个dynamic_reconfigure_node，来调用参数的动态配置。
+
+
+
+
+二、创建服务端节点
+
+
+
+dynamic_reconfigure_node节点的代码实现server.cpp如下：
+
+#include <ros/ros.h>
+
+#include <dynamic_reconfigure/server.h>
+#include <dynamic_tutorials/TutorialsConfig.h>
+
+void callback(dynamic_tutorials::TutorialsConfig &config, uint32_t level) {
+  ROS_INFO("Reconfigure Request: %d %f %s %s %d", 
+            config.int_param, config.double_param, 
+            config.str_param.c_str(), 
+            config.bool_param?"True":"False", 
+            config.size);
+}
+
+int main(int argc, char **argv) 
+{
+    ros::init(argc, argv, "dynamic_tutorials");
+
+    dynamic_reconfigure::Server<dynamic_tutorials::TutorialsConfig> server;
+    dynamic_reconfigure::Server<dynamic_tutorials::TutorialsConfig>::CallbackType f;
+
+    f = boost::bind(&callback, _1, _2);
+    server.setCallback(f);
+
+    ROS_INFO("Spinning node");
+    ros::spin();
+    return 0;
+}
+
+代码的内容不多，分析其实现过程。
+
+#include < ros/ros.h>
+ 
+#include < dynamic_reconfigure/server.h>
+#include < dynamic_tutorials/TutorialsConfig.h>
+
+首先需要包含必要的头文件，其中有一个TutorialsConfig.h头文件，就是配置文件所生成的。
+
+    ros::init(argc, argv, "dynamic_tutorials");
+
+    dynamic_reconfigure::Server<dynamic_tutorials::TutorialsConfig> server;
+
+先来看main函数的内容。首先初始化ROS节点，然后创建了一个参数动态配置的服务端实例，参数配置的类型就是配置文件中描述的类型。该服务端实例会监听客户端的参数配置请求。
+
+    dynamic_reconfigure::Server<dynamic_tutorials::TutorialsConfig>::CallbackType f;
+
+    f = boost::bind(&callback, _1, _2);
+    server.setCallback(f);
+
+然后定义一个回调函数，并将回调函数和服务端绑定，当客户端请求修改参数时，服务端即可跳转到回调函数中进行处理。
+
+void callback(dynamic_tutorials::TutorialsConfig &config, uint32_t level) {
+  ROS_INFO("Reconfigure Request: %d %f %s %s %d", 
+            config.int_param, config.double_param, 
+            config.str_param.c_str(), 
+            config.bool_param?"True":"False", 
+            config.size);
+}
+
+对于本例程来说，回调函数并不复杂。回调函数的传入参数有两个，一个是新的参数配置值，另外一个表示参数修改的掩码。然后在回调函数中将修改后的参数值打印出来。
+
+
+代码编辑完成后在CmakeLists.txt中加入以下编译规则：
+
+# for dynamic reconfigure
+add_executable(dynamic_reconfigure_node src/server.cpp)
+
+# make sure configure headers are built before any node using them
+add_dependencies(dynamic_reconfigure_node ${PROJECT_NAME}_gencfg)
+
+# for dynamic reconfigure
+target_link_libraries(dynamic_reconfigure_node ${catkin_LIBRARIES})
+
+现在就可以编译dynamic_tutorials功能包了。
+
+
+
+
+三、实现动态参数修改
+
+
+
+编译成功后使用如下命令将roscore和dynamic_reconfigure_node运行起来：
+
+$ roscore
+$ rosrun dynamic_tutorials dynamic_reconfigure_node
+
+这个时候参数动态配置的服务端就运行起来了，使用ROS提供的可视化参数配置工具来修改参数：
+
+$ rosrun rqt_reconfigure rqt_reconfigure
+
+在打开的如下图所示的可视化界面中，可以通过输入、拖动、下拉选择的方式动态修改参数，输入方式的不同和配置文件中的参数设置有关，例如设置了参数的最大最小值，就会有拖动条；设置为枚举类型，就会是下拉选项。
+
+2
+
+修改后可以在服务端的终端中看到修改成功的打印信息，如下图所示：
+
+3
+
+
+

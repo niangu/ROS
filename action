@@ -1,0 +1,194 @@
+ROS探索总结（三十二）——action
+20139 21 2017年4月30日 09时44分
+古月
+古月
+ROS中常用的通讯机制是topic和service，但是在很多场景下，这两种通讯机制往往满足不了我们的需求，比如上一篇博客我们讲到的机械臂控制，如果用topic发布一个运动目标，由于topic没有反馈，还需要另外订阅一个机械臂状态的topic，来获得运动过程的状态。如果用service来发布运动目标，虽然可以获得反馈，但是反馈只有一次，对于我们的控制来讲数据太少了，而且如果反馈迟迟没收到，也只能傻傻等待，干不了其他事情。那么有没有一种更加适合的通讯机制，来满足类似这样场景的需求呢？当然是有的，就是我们这篇要讲到的action通讯机制。
+
+一、什么是action
+ROS中有一个actinlib的功能包集，实现了action的通讯机制。那么什么是action呢？action也是一种类似于service的问答通讯机制，不一样的地方是action还带有一个反馈机制，可以不断反馈任务的实施进度，而且可以在任务实施过程中，中止运行。
+
+回到我们前边提到的场景，我们使用action来发布一个机器人的运动目标，机器人接到这个action后，就开始运动，在运动过程中不断反馈当前的运动状态，在运动过程中我们可以取消运动，让机器人停止，如果机器人完成了运动目标，那么action会返回任务完成的标志。
+
+二、action的工作机制
+action采用了服务器端/客户端（client and server）的工作模式，如下图所示：
+
+clip_image002
+
+client和server之间通过actionlib定义的“action protocol”进行通讯。这种通讯协议是基于ROS的消息机制实现的，为用户提供了client和server的接口，接口如下图所示：
+
+clip_image004
+
+在上边的action的接口框图上，我们可以看到，client向server端发布任务目标以及在必要的时候取消任务，server会向client发布当前的状态、实时的反馈和最终的任务结果。
+
+goal：任务目标
+cancel：请求取消任务
+status：通知client当前的状态
+feedback：周期反馈任务运行的监控数据
+result：向client发送任务的执行结果，这个topic只会发布一次。
+ 
+
+三、action的定义
+ROS中的message是通过.msg文件来定义的，service是通过.srv定义，那么action是不是也是通过类似的方法定义呢？答案是肯定的，action通过.action文件定义，放置在功能包的action文件夹下，格式类似如下：
+
+# Define the goal
+uint32 dishwasher_id  # Specify which dishwasher we want to use
+---
+# Define the result
+uint32 total_dishes_cleaned
+---
+# Define a feedback message 
+float32 percent_complete
+从上边的.action文件示例中，我们可以发现，定义一个action需要三个部分：goal、result、feedback，具体含义在上一小节中已经讲过了。
+
+实现了.action之后，还需要将这个文件加入编译，在CMakeLists.txt文件中添加如下的编译规则：
+
+find_package(catkin REQUIRED genmsg actionlib_msgs actionlib)
+add_action_files(DIRECTORY action FILES DoDishes.action) generate_messages(DEPENDENCIES actionlib_msgs)
+还需要在功能包的package.xml中添加：
+
+<build_depend>actionlib</build_depend>
+<build_depend>actionlib_msgs</build_depend>
+<run_depend>actionlib</run_depend> 
+<run_depend>actionlib_msgs</run_depend>
+
+现在就可以进行编译了，编译完成后会产生一系列的.msg文件：
+
+DoDishesAction.msg
+
+DoDishesActionGoal.msg
+
+DoDishesActionResult.msg
+
+DoDishesActionFeedback.msg
+
+DoDishesGoal.msg
+
+DoDishesResult.msg
+
+DoDishesFeedback.msg
+
+ 
+
+这些不同的消息类型，我们在调用action时根据需要会用到。从这里我们也可以看到，action确实是基于message实现的。
+
+ 
+
+四、例程学习
+接下来，我们就来学习一下，如何实现一个action的客户端和服务器端，这里需要创建一个功能包，并且按照上边的方法完成action数据的定义。我这里创建的功能包命名为：action__tutorials，也可以在我的github上找到：https://github.com/huchunxu/ros_blog_sources
+
+ 
+
+4.1 客户端
+在上节的action定义中，定义了一个洗盘子的任务，就以此为例，我们首先来实现一个客户端，发出action的请求。
+
+#include <actionlib/client/simple_action_client.h>
+#include "action_tutorials/DoDishesAction.h"
+
+typedef actionlib::SimpleActionClient<action_tutorials::DoDishesAction> Client;
+
+// 当action完成后会调用次回调函数一次
+void doneCb(const actionlib::SimpleClientGoalState& state,
+        const action_tutorials::DoDishesResultConstPtr& result)
+{
+    ROS_INFO("Yay! The dishes are now clean");
+    ros::shutdown();
+}
+
+// 当action激活后会调用次回调函数一次
+void activeCb()
+{
+    ROS_INFO("Goal just went active");
+}
+
+// 收到feedback后调用的回调函数
+void feedbackCb(const action_tutorials::DoDishesFeedbackConstPtr& feedback)
+{
+    ROS_INFO(" percent_complete : %f ", feedback->percent_complete);
+}
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "do_dishes_client");
+
+    // 定义一个客户端
+    Client client("do_dishes", true);
+
+    // 等待服务器端
+    ROS_INFO("Waiting for action server to start.");
+    client.waitForServer();
+    ROS_INFO("Action server started, sending goal.");
+
+    // 创建一个action的goal
+    action_tutorials::DoDishesGoal goal;
+    goal.dishwasher_id = 1;
+
+    // 发送action的goal给服务器端，并且设置回调函数
+    client.sendGoal(goal,  &doneCb, &activeCb, &feedbackCb);
+
+    ros::spin();
+
+    return 0;
+}
+ 
+
+4.2 服务器端
+接下来要实现服务器端的节点，完成洗盘子的任务，并且反馈洗盘子的实时进度。
+
+#include <ros/ros.h>
+#include <actionlib/server/simple_action_server.h>
+#include "action_tutorials/DoDishesAction.h"
+
+typedef actionlib::SimpleActionServer<action_tutorials::DoDishesAction> Server;
+
+// 收到action的goal后调用的回调函数
+void execute(const action_tutorials::DoDishesGoalConstPtr& goal, Server* as)
+{
+    ros::Rate r(1);
+    action_tutorials::DoDishesFeedback feedback;
+
+    ROS_INFO("Dishwasher %d is working.", goal->dishwasher_id);
+
+    // 假设洗盘子的进度，并且按照1hz的频率发布进度feedback
+    for(int i=1; i<=10; i++)
+    {
+        feedback.percent_complete = i * 10;
+        as->publishFeedback(feedback);
+        r.sleep();
+    }
+
+    // 当action完成后，向客户端返回结果
+    ROS_INFO("Dishwasher %d finish working.", goal->dishwasher_id);
+    as->setSucceeded();
+}
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "do_dishes_server");
+    ros::NodeHandle n;
+
+    // 定义一个服务器
+    Server server(n, "do_dishes", boost::bind(&execute, _1, &server), false);
+
+    // 服务器开始运行
+    server.start();
+
+    ros::spin();
+
+    return 0;
+}
+4.3 运行效果
+编译运行，首先启动客户端的节点，由于服务端没有启动，客户端会保持等待；然后启动服务器端的节点，会立刻收到服务器端的请求，并且开始任务、发送反馈，在客户端可以看到反馈的进度信息。
+
+·         客户端：
+
+clip_image006
+
+·         服务器端：
+
+clip_image008
+
+ 
+
+这个例程是我根据官方的例程修改而来，加入了反馈的回调，有兴趣的读者也可以参考action的wiki，进行更加深入的学习。
+
+ 
