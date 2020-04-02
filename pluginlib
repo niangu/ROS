@@ -1,0 +1,222 @@
+ROS探索总结（三十三）——pluginlib
+11983 14 2017年5月28日 21时44分
+古月
+古月
+在ROS的开发中，常常会接触到一个名词——插件（plugin）。这个名词在计算机软件开发中是常常会提到的，具体含义可以参考百度百科的插件词条。在ROS中，插件的概念类似，简单来讲，ROS中的插件（plugin）就是可以动态加载的扩展功能类。ROS中的pluginlib功能包，提供了加载和卸载plugin的C++库，开发者在使用plugin时，不需要考虑plugin类的链接位置，只需要将plugin注册到pluginlib中，即可直接动态加载。这种插件机制非常方便，开发者不需要改动原本软件的代码，直接将需要的功能通过plugin进行扩展即可。本文带你走近plugin，探索如何实现一个简单的plugin。
+
+一、示例
+我们首先通过下边这张图来了解一下pluginlib的工作原理。
+
+plugin_model_副本
+
+
+假设ROS的功能包中已经存在一个polygon的基类（polygon_interface_package），我们可以通过plugin来实现两种polygon的功能支持：rectangle_plugin（rectangle_plugin_package）和triangle_plugin（triangle_plugin_package），在这两个功能包的package.xml中，需要声明polygon_interface_package中的基类polygon，然后在编译的过程中，会把插件注册到ROS系统，用户可以直接通过rospack的命令进行全局的插件查询，也可以在开发中直接使用这些插件了。
+
+ 
+
+二、如何实现一个插件
+pluginlib利用了C++多态的特性，不同的插件只要使用统一的接口，就可以替换使用，用户在使用过程中也不需要修改代码或者重新编译，选择需要使用的插件即可扩展相应的功能。一般来讲，实现一个插件主要需要以下几个步骤：
+
+创建基类，定义统一的接口。如果是基于现有的基类实现plugin，则不需要这个步骤。
+创建plugin类，继承基类，实现统一的接口。
+注册插件
+编译生成插件的动态链接库
+将插件加入ROS系统
+接下来，我们就根据这几个步骤来实现第一节图示中的plugin功能，在开始之前，你需要建立一个pluginlib_tutorials的功能包，添加依赖pluginlib。
+
+$ catkin_create_pkg pluginlib_tutorials roscpp pluginlib
+完整的功能包代码可以在github上下载。
+
+ 
+
+三、创建基类
+首先我们来创建一个polygon的基类（polygon_base.h），定义了一些简单的接口，需要注意的是initialize()这个接口的作用。
+
+#ifndef PLUGINLIB_TUTORIALS_POLYGON_BASE_H_
+#define PLUGINLIB_TUTORIALS_POLYGON_BASE_H_
+
+namespace polygon_base
+{
+  class RegularPolygon
+  {
+    public:
+      //pluginlib要求构造函数不能带有参数，所以定义initialize来完成需要初始化的工作
+      virtual void initialize(double side_length) = 0;
+
+      //计算面积的接口函数
+      virtual double area() = 0;
+
+      virtual ~RegularPolygon(){}
+
+    protected:
+      RegularPolygon(){}
+  };
+};
+#endif
+四、创建plugin类
+接下来我们来创建rectangle_plugin和triangle_plugin类（polygon_plugins.h），实现基类的接口，也可以添加plugin自己需要的接口。
+
+#ifndef PLUGINLIB_TUTORIALS_POLYGON_PLUGINS_H_
+#define PLUGINLIB_TUTORIALS_POLYGON_PLUGINS_H_
+#include <pluginlib_tutorials/polygon_base.h>
+#include <cmath>
+
+namespace polygon_plugins
+{
+  class Triangle : public polygon_base::RegularPolygon
+  {
+    public:
+      Triangle() : side_length_() {}
+
+      // 初始化边长
+      void initialize(double side_length)
+      {
+        side_length_ = side_length;
+      }
+
+      double area()
+      {
+        return 0.5 * side_length_ * getHeight();
+      }
+
+      // Triangle类自己的接口
+      double getHeight()
+      {
+        return sqrt((side_length_ * side_length_) - ((side_length_ / 2) * (side_length_ / 2)));
+      }
+
+    private:
+      double side_length_;
+  };
+
+  class Square : public polygon_base::RegularPolygon
+  {
+    public:
+      Square() : side_length_() {}
+
+      // 初始化边长
+      void initialize(double side_length)
+      {
+        side_length_ = side_length;
+      }
+
+      double area()
+      {
+        return side_length_ * side_length_;
+      }
+
+    private:
+      double side_length_;
+
+  };
+};
+#endif
+五、注册插件
+上边两步我们就实现了两个简单插件的主要代码，接下来我们还需要创建一个cpp文件（polygon_plugins.cpp），来注册插件，声明我们创建了两个插件： 
+
+//包含pluginlib的头文件，使用pluginlib的宏来注册插件
+#include <pluginlib/class_list_macros.h>
+#include <pluginlib_tutorials/polygon_base.h>
+#include <pluginlib_tutorials/polygon_plugins.h>
+
+//注册插件，宏参数：plugin的实现类，plugin的基类
+PLUGINLIB_EXPORT_CLASS(polygon_plugins::Triangle, polygon_base::RegularPolygon);
+PLUGINLIB_EXPORT_CLASS(polygon_plugins::Square, polygon_base::RegularPolygon);
+
+六、编译插件的动态链接库
+为了编译插件的功能包，需要修改CMakefile.txt文件，加入下边两行编译规则，将插件编译成动态链接库。
+
+include_directories(include)
+add_library(polygon_plugins src/polygon_plugins.cpp)
+现在可以编译功能包了，但是为了便于开发者使用plugin，还需要编写xml文件，将插件加入ROS系统。
+
+ 
+
+七、将插件加入ROS系统
+这里需要添加和修改功能包根目录下的两个xml文件。
+
+7.1 polygon_plugins.xml
+<library path="lib/libpluginlib_tutorials">
+  <class name="pluginlib_tutorials/regular_triangle" type="polygon_plugins::Triangle" base_class_type="polygon_base::RegularPolygon">
+    <description>This is a triangle plugin.</description>
+  </class>
+  <class name="pluginlib_tutorials/regular_square" type="polygon_plugins::Square" base_class_type="polygon_base::RegularPolygon">
+    <description>This is a square plugin.</description>
+  </class>
+</library>
+可以看到，这个xml文件主要描述了plugin的动态库路径、实现类、基类、描述等信息。
+
+ 
+
+7.2 package.xml
+在package.xml中添加下边的两行代码：
+
+<export>
+  <pluginlib_tutorials plugin="${prefix}/polygon_plugins.xml" /> 
+</export>
+然后我们可以通过下边的命令来查看功能包的插件路径：
+
+rospack plugins --attrib=plugin pluginlib_tutorials
+如果没有问题，会出现如下的结果：
+
+clip_image003
+
+ 
+
+八、调用插件
+在上边的步骤中，我们已经实现了插件的所有代码，接下来，我们就来尝试调用这两个插件，先来看一下代码（polygon_loader.cpp）：
+
+#include <boost/shared_ptr.hpp>
+
+#include <pluginlib/class_loader.h>
+#include <pluginlib_tutorials/polygon_base.h>
+
+int main(int argc, char** argv)
+{
+  // 创建一个ClassLoader，用来加载plugin
+  pluginlib::ClassLoader<polygon_base::RegularPolygon> poly_loader("pluginlib_tutorials", "polygon_base::RegularPolygon");
+
+  try
+  {
+    // 加载Triangle插件类，路径在polygon_plugins.xml中定义
+    boost::shared_ptr<polygon_base::RegularPolygon> triangle = poly_loader.createInstance("pluginlib_tutorials/regular_triangle");
+
+    // 初始化边长
+    triangle->initialize(10.0);
+
+    ROS_INFO("Triangle area: %.2f", triangle->area());
+  }
+  catch(pluginlib::PluginlibException& ex)
+  {
+    ROS_ERROR("The plugin failed to load for some reason. Error: %s", ex.what());
+  }
+
+  try
+  {
+    boost::shared_ptr<polygon_base::RegularPolygon> square = poly_loader.createInstance("pluginlib_tutorials/regular_square");
+    square->initialize(10.0);
+
+    ROS_INFO("Square area: %.2f", square->area());
+  }
+  catch(pluginlib::PluginlibException& ex)
+  {
+    ROS_ERROR("The plugin failed to load for some reason. Error: %s", ex.what());
+  }
+
+  return 0;
+}
+从上边的代码中我们可以看到，plugin可以在程序中动态加载，成功加载之后就可以调用plugin的接口来实现相应的功能了。
+
+修改CMakefile.txt，添加上边代码的编译规则：
+
+add_executable(polygon_loader src/polygon_loader.cpp) 
+target_link_libraries(polygon_loader ${catkin_LIBRARIES})
+然后编译并运行，可以看到如下结果：
+
+clip_image004
+
+ 
+
+OK，现在我们就完成了插件的实现和调用了，是不是还比较简单。在实际应用中，我们需要根据需求实现插件更多的扩展功能，但是基本原理仍然相同。下一篇我们将会探索如何实现一个rviz的插件，敬请期待。
+
+ 

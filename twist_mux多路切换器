@@ -1,0 +1,206 @@
+ROS探索总结（四十二）——twist_mux多路切换器
+6615 2 2018年2月11日 16时20分
+古月
+古月
+我们在做机器人ROS开发时，常常会遇到相同速度控制消息的选择问题。比如说控制机器人移动的geometry_msgs::Twist消息，可以使用键盘节点发布，可以使用手柄节点发布，也可以在导航过程中由movebase发布，那么这些节点同时运行时，多个节点发布相同的速度控制话题，这个时候机器人就迷茫了，到底该听谁的呢？只能收到哪个数据就听谁的。
+
+针对这样的问题，ROS提供了一种mux多路切换器——twist_mux，可以帮助我们切换到希望接收的数据源上。
+
+ 
+
+一、原理
+正如我们开篇描述的场景，当机器人接收到不同节点发布的速度控制消息时，该如何进行选择呢？
+
+回想一下RTOS中的任务调度原则，每个任务都有自己的优先级，当有多个任务进入等待状态时，系统会选择优先级最高的任务执行，很多系统还支持同等优先级的任务，此时系统会按照时间片轮询的方式执行任务，也就是不偏不倚，平等对待相同优先级的任务。
+
+twist_mux的原理类似于RTOS中的任务调度，需要为每个输入的话题设置优先级，不同话题也可以设置为同样的优先级，但是并不推荐这样做。除了优先级机制外，twist_mux还可以根据超时限制、外部锁话题（lock topics）来限制输入话题的选择。
+
+twist_mux功能包中的核心节点就是twist_mux，其输入输出如下：
+
+image
+
+左侧输入的是多个geometry_msgs::Twist类型的话题，通过twist_mux的选择后，输出唯一的geometry_msgs::Twist话题。下方输入的话题就是用户动态配置选择机制的锁话题，话题的消息类型是Bool，正如锁一样，只有打开和关闭两种状态。这里锁的概念可以理解为：通过限制不同优先级的输入源，达到控制输出的效果。
+
+ 
+
+
+二、配置
+twist_mux功能包的安装一句话就可以搞定：
+
+sudo apt-get install ros-indigo-twist-mux
+然后就可以运行多路切换器了：
+
+roslaunch twist_mux twist_mux.launch
+打印当前的话题列表可以看到：
+
+image
+
+回头再来看一下twist_mux.launch文件里边到底干了啥：
+
+<launch>
+  <arg name="joy_vel_in"  default="input_joy/cmd_vel"/>
+  <arg name="joy_vel_out" default="joy_vel"/>
+  <arg name="cmd_vel_out" default="twist_mux/cmd_vel"/>
+  <arg name="config_locks"  default="$(find twist_mux)/config/twist_mux_locks.yaml"/>
+  <arg name="config_topics" default="$(find twist_mux)/config/twist_mux_topics.yaml"/>
+  <arg name="config_joy" default="$(find twist_mux)/config/joystick.yaml"/>
+  <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen">
+    <remap from="cmd_vel_out" to="$(arg cmd_vel_out)"/>
+    <rosparam file="$(arg config_locks)"  command="load"/>
+    <rosparam file="$(arg config_topics)" command="load"/>
+  </node>
+  <node pkg="twist_mux" type="twist_marker" name="twist_marker">
+    <remap from="twist"  to="$(arg cmd_vel_out)"/>
+    <remap from="marker" to="twist_marker"/>
+  </node>
+  <node pkg="twist_mux" type="joystick_relay.py" name="joystick_relay" output="screen">
+    <remap from="joy_vel_in"  to="$(arg joy_vel_in)"/>
+    <remap from="joy_vel_out" to="$(arg joy_vel_out)"/>
+    <rosparam file="$(arg config_joy)" command="load"/>
+  </node>
+</launch>
+可以看到，在launch文件中配置了一些话题名参数，在启动twist_mux节点的过程中还加载了两个配置文件，twist_mux_topics.yaml对应的就是输入话题的配置，twist_mux_locks.yaml对应的是锁话题的配置。
+
+（1）twist_mux_topics.yaml
+
+# Input topics handled/muxed.
+# For each topic:
+# - name    : name identifier to select the topic
+# - topic   : input topic of geometry_msgs::Twist type
+# - timeout : timeout in seconds to start discarding old messages, and use 0.0 speed instead
+# - priority: priority in the range [0, 255]; the higher the more priority over other topics
+topics:
+-
+  name    : navigation
+  topic   : nav_vel
+  timeout : 0.5
+  priority: 10
+-
+  name    : joystick
+  topic   : joy_vel
+  timeout : 0.5
+  priority: 100
+-
+  name    : keyboard
+  topic   : key_vel
+  timeout : 0.5
+  priority: 90
+-
+  name    : tablet
+  topic   : tab_vel
+  timeout : 0.5
+  priority: 100
+该配置文件中包含了一个输入话题的配置列表，每个输入话题的配置项包含以下几个：
+
+name：一个用户可读的命名，不是话题名，只用于调试显示；
+topic：话题名，话题必须是geometry_msgs::Twist类型；
+timeout：消息允许的超时限制，超过此时间仍然没有数据后，会切换到其他输入话题上，如果设置为0的话，相当于没有限制，会无限等待；
+priority：输入话题的优先级，0~255之间，值越大优先级越高
+ 
+
+（2）twist_mux_locks.yaml
+
+# Locks to stop the twist inputs.
+# For each lock:
+# - topic   : input topic that provides the lock; it must be of type std_msgs::Bool?!!!
+# - timeout : == 0.0 -> not used
+#              > 0.0 -> the lock is supposed to published at a certain frequency in order
+#                       to detect that the publisher is alive; the timeout in seconds allows
+#                       to detect that, and if the publisher dies we will enable the lock
+# - priority: priority in the range [0, 255], so all the topics with priority lower than it
+#             will be stopped/disabled
+locks:
+-
+  name    : pause
+  topic   : pause_navigation
+  timeout : 0.0
+  # Same priority as joystick control, so it'll not block it.
+  priority: 100
+-
+  name    : loop_closure
+  topic   : stop_closing_loop
+  timeout : 0.0
+  priority: 200
+-
+  name    : joystick
+  topic   : joy_priority
+  timeout : 0.0
+  priority: 100
+关于锁话题的配置也是一个列表，每一个子项都是一个锁话题的配置，配置项包含以下几个：
+
+name：一个用户可读的命名，不是话题名，只用于调试显示；
+topic：锁话题名，消息类型必须是std_msgs::Bool 类型；
+timeout：锁话题需要按周期发布，所以超过时间限制后，会认为发布锁的节点掉线了，锁失效，类似于看门狗的功能；如果设置为0的话，则没有超时限制，持续有效；
+priority：限制输入话题的优先级，0~255之间，在此值以下优先级的话题，会被上锁，开锁之前无法输出，以达到动态控制输出的效果。
+ 
+
+三、实践
+现在我们就来通过时间验证一下twist_mux的效果。
+
+首先启动twist_mux节点：
+
+roslaunch twist_mux twist_mux.launch
+然后监听最终输出的速度控制消息：
+
+rostopic echo /twist_mux/cmd_vel
+1. 多输入源的选择
+目前还没有任何输入，所以还不会有输出的消息。
+
+接着我们就可以发布几个输入的消息了，先发布一个导航输出的速度消息：
+
+rostopic pub -r 10 /nav_vel geometry_msgs/Twist "linear:
+  x: 1.0
+  y: 0.0
+  z: 0.0
+angular:
+  x: 0.0
+  y: 0.0
+  z: 0.0"
+成功发布之后，输出监听并没有任何输出，这是因为在锁消息中，我们设置的最小优先级是100，而nav_vel的优先级在配置文件中设置的是10，自然被挡到了门外，没办法输出。
+
+再来发布joy_vel消息：
+
+rostopic pub -r 10 /joy_vel geometry_msgs/Twist "linear:
+  x: 2.0
+  y: 0.0
+  z: 0.0
+angular:
+  x: 0.0
+  y: 0.0
+  z: 0.0"
+很快就可以在输出监听的终端中看到如下图所示的joy_vel的消息了：
+
+image
+
+此时有nav_vel和joy_vel两个输入消息，经过twist_mux的选择后，只输出了joy_vel消息。
+
+那么如果我们想要输出nav_vel怎么办呢？
+
+在nav_vel和joy_vel两个消息保持发布的状态下，重新打开一个窗口，关闭优先级门槛的限制：
+
+rostopic pub /joy_priority std_msgs/Bool "data: false"
+此时如果joy_vel消息停止或者超时的话，twist_mux就会自动切换到nav_vel输出，我们可以直接kiil掉joy_vel的话题发布，输出监听的终端就会显示nav_vel消息的数据了：
+
+image
+
+2. 停止某优先级以下的输入源
+如果我们先要暂停输出，怎么办呢？锁消息中也设置了暂停nav_vel的话题：
+
+rostopic pub /pause_navigation std_msgs/Bool "data: true"
+现在nav_vel话题就暂停了，想要恢复的话，只需要在发布一次pause_navigation消息即可：
+
+rostopic pub /pause_navigation std_msgs/Bool "data: false"
+需要注意的是，/pause_navigation话题设置的优先级和joy_priority是一样的，所以这里的暂停无法暂停优先级100及以上的话题，所以并不会影响joy_vel消息的转发。
+
+我们还在锁配置中设置了一个优先级为200的控制锁，一旦我们生效这个锁，优先级200以下的话题都会停止转发：
+
+rostopic pub /stop_closing_loop std_msgs/Bool "data: true"
+现在所有话题都无法通过twist_mux输出了。
+
+OK，现在我们应该已经明白了twist_mux功能包的原理和使用方法，灵活使用锁配置，可以让我们轻松控制多个输入源的切换。
+
+ 
+
+ 
+
+
